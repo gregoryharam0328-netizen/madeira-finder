@@ -43,12 +43,14 @@ def sync_flags_for_workflow(state: UserListingState, workflow: str) -> None:
     if workflow == "favourite":
         state.is_saved = True
         state.saved_at = now
-
-    if workflow == "not_interested":
-        state.is_hidden = True
-        state.hidden_at = now
+        state.is_hidden = False
+        state.hidden_at = None
+    elif workflow == "not_interested":
         state.is_saved = False
         state.saved_at = None
+        # Keep is_hidden in sync for dismissed rows (filters + Supabase/backfill expect it).
+        state.is_hidden = True
+        state.hidden_at = now
     else:
         state.is_hidden = False
         state.hidden_at = None

@@ -29,6 +29,7 @@ class DashboardSummary(BaseModel):
     hidden: int
     seen: int
     total: int
+    not_interested: int = Field(0, description="Dismissed listings (GET /listings/not-interested).")
     price_changes: int = Field(0, description="Groups with a price_changed event (GET /listings/price-changes).")
     need_to_call: int = 0
     viewing_arranged: int = 0
@@ -73,6 +74,8 @@ class ListingCardOut(BaseModel):
     is_saved: bool = False
     is_seen: bool = False
     is_hidden: bool = False
+    # Original portal listing date when scraped; cards fall back to first_seen_at if null.
+    published_at: str | None = None
     first_seen_at: str | None = None
     last_seen_at: str | None = None
 

@@ -11,6 +11,18 @@ from app.models import Listing, ListingEvent, ListingGroup, ListingGroupMember, 
 from app.schemas import ListingCardOut, PortalLinkOut
 from app.services.user_workflow import effective_workflow
 
+# Full listing descriptions are huge JSON; cards only show a short blurb — trim to speed API + frontend.
+_LIST_CARD_DESCRIPTION_MAX = 400
+
+
+def _trim_description_for_list_card(text: str | None) -> str | None:
+    if text is None:
+        return None
+    s = str(text).strip()
+    if len(s) <= _LIST_CARD_DESCRIPTION_MAX:
+        return s
+    return s[: _LIST_CARD_DESCRIPTION_MAX - 1].rstrip() + "…"
+
 
 def batch_price_reduced(db: Session, listing_ids: list[UUID]) -> dict[UUID, bool]:
     """True if any recorded price change lowered the asking price for that listing row."""
@@ -73,7 +85,7 @@ def serialize_listing_rows(db: Session, rows: list) -> list[ListingCardOut]:
             ListingCardOut(
                 listing_group_id=str(group.id),
                 title=listing.title,
-                description=listing.description,
+                description=_trim_description_for_list_card(listing.description),
                 price=float(listing.price) if listing.price is not None else None,
                 currency=listing.currency,
                 location_text=listing.location_text,
@@ -94,6 +106,7 @@ def serialize_listing_rows(db: Session, rows: list) -> list[ListingCardOut]:
                 is_saved=bool(state and state.is_saved),
                 is_seen=bool(state and state.is_seen),
                 is_hidden=bool(state and state.is_hidden),
+                published_at=listing.published_at.isoformat() if listing.published_at else None,
                 first_seen_at=listing.first_seen_at.isoformat() if listing.first_seen_at else None,
                 last_seen_at=listing.last_seen_at.isoformat() if listing.last_seen_at else None,
             )

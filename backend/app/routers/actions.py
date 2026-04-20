@@ -105,5 +105,6 @@ def patch_listing_state(
         sync_flags_for_workflow(state, body.workflow_status)
     if body.note is not None:
         state.note = body.note
+    db.flush()
     db.commit()
     return {"ok": True}

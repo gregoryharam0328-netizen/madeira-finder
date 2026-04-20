@@ -10,6 +10,7 @@ from app.datetime_utils import local_today_midnight_utc_naive
 from app.models import Listing, ListingEvent, User, UserListingState
 from app.services.listing_cards import serialize_listing_rows
 from app.services.listing_query import base_query
+from app.services.listing_visibility import filter_dismissed_not_interested, filter_visible_on_main_feed
 
 router = APIRouter()
 
@@ -90,8 +91,13 @@ def all_listings(
         query = query.filter(Listing.eligibility_status == "eligible")
     else:
         query = query.filter(Listing.eligibility_status.in_(["eligible", "filtered_out"]))
+    ws_for_visibility = (workflow_status or "").strip().lower() if workflow_status else ""
     if exclude_hidden:
-        query = query.filter((UserListingState.is_hidden.is_(False)) | (UserListingState.is_hidden.is_(None)))
+        # "Not interested" lives off the main feed; allow browsing via explicit workflow filter.
+        if ws_for_visibility == "not_interested":
+            query = filter_dismissed_not_interested(query)
+        else:
+            query = filter_visible_on_main_feed(query)
     query = _apply_listing_filters(
         query,
         min_price=min_price,
@@ -116,13 +122,15 @@ def new_today(
     area: str | None = Query(None),
     sort: str | None = Query("newest"),
     exclude_hidden: bool = Query(True),
+    limit: int = Query(200, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     query = base_query(db, current_user.id).filter(Listing.first_seen_at >= local_today_midnight_utc_naive())
     query = query.filter(Listing.is_active.is_(True), Listing.eligibility_status == "eligible")
     if exclude_hidden:
-        query = query.filter((UserListingState.is_hidden.is_(False)) | (UserListingState.is_hidden.is_(None)))
+        query = filter_visible_on_main_feed(query)
     query = _apply_listing_filters(
         query,
         min_price=min_price,
@@ -134,7 +142,7 @@ def new_today(
         workflow_status=None,
     )
     query = _apply_sort(query, sort)
-    rows = query.all()
+    rows = query.offset(offset).limit(limit).all()
     return serialize_listing_rows(db, rows)
 
 
@@ -147,14 +155,34 @@ def saved(
     query = base_query(db, current_user.id).filter(UserListingState.is_saved.is_(True))
     query = query.filter(Listing.is_active.is_(True), Listing.eligibility_status == "eligible")
     if exclude_hidden:
-        query = query.filter((UserListingState.is_hidden.is_(False)) | (UserListingState.is_hidden.is_(None)))
+        query = filter_visible_on_main_feed(query)
     rows = query.order_by(Listing.first_seen_at.desc()).all()
+    return serialize_listing_rows(db, rows)
+
+
+@router.get("/not-interested")
+def not_interested_listings(
+    sort: str | None = Query("newest", description="newest | price_asc | price_desc"),
+    limit: int = Query(200, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Listing groups the user marked Not interested (still in DB; hidden from main feeds)."""
+    query = base_query(db, current_user.id)
+    query = query.filter(Listing.is_active.is_(True))
+    query = query.filter(Listing.eligibility_status.in_(["eligible", "filtered_out"]))
+    query = filter_dismissed_not_interested(query)
+    query = _apply_sort(query, sort)
+    rows = query.offset(offset).limit(limit).all()
     return serialize_listing_rows(db, rows)
 
 
 @router.get("/price-changes")
 def price_changes(
     exclude_hidden: bool = Query(True),
+    limit: int = Query(200, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -163,6 +191,6 @@ def price_changes(
     )
     query = query.filter(Listing.is_active.is_(True), Listing.eligibility_status == "eligible")
     if exclude_hidden:
-        query = query.filter((UserListingState.is_hidden.is_(False)) | (UserListingState.is_hidden.is_(None)))
-    rows = query.order_by(ListingEvent.detected_at.desc()).all()
+        query = filter_visible_on_main_feed(query)
+    rows = query.order_by(ListingEvent.detected_at.desc()).offset(offset).limit(limit).all()
     return serialize_listing_rows(db, rows)
