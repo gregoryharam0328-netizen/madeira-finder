@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 10080
     backend_cors_origins: str = "https://madeira-frontend.onrender.com"
     # Optional regex for dynamic frontend hosts (e.g. Render preview domains).
-    backend_cors_origin_regex: str | None = None
+    # Default allows Render-hosted frontends to call this API even if env is not set.
+    backend_cors_origin_regex: str | None = r"https://.*\.onrender\.com"
 
     resend_api_key: str | None = None
     digest_from_email: str = "info@exploringmadeira.com"
