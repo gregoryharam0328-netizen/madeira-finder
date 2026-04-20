@@ -105,13 +105,15 @@ function formatListedLabel(publishedAt: string | null | undefined, firstSeenAt: 
   return `Listed: ${formatted}`;
 }
 
+type ActionResponse = { ok?: boolean; summary?: Record<string, unknown> };
+
 export default function ListingCard({
   item,
   onRefresh,
   variant = "default",
 }: {
   item: any;
-  onRefresh: () => void | Promise<void>;
+  onRefresh: (embeddedSummary?: Record<string, unknown> | null) => void | Promise<void>;
   variant?: "default" | "new_today";
 }) {
   const reduce = useReducedMotion();
@@ -188,20 +190,17 @@ export default function ListingCard({
   );
 
   async function setWorkflow(next: string) {
-    await apiFetch(`/actions/${item.listing_group_id}/state`, {
+    const data = (await apiFetch(`/actions/${item.listing_group_id}/state`, {
       method: "PATCH",
       body: JSON.stringify({ workflow_status: next }),
-    });
-    await Promise.resolve(onRefresh());
+    })) as ActionResponse;
+    await onRefresh(data?.summary ?? null);
   }
 
   async function toggleStar() {
-    if (item.is_saved) {
-      await apiFetch(`/actions/${item.listing_group_id}/unsave`, { method: "POST" });
-    } else {
-      await apiFetch(`/actions/${item.listing_group_id}/save`, { method: "POST" });
-    }
-    await Promise.resolve(onRefresh());
+    const path = item.is_saved ? "unsave" : "save";
+    const data = (await apiFetch(`/actions/${item.listing_group_id}/${path}`, { method: "POST" })) as ActionResponse;
+    await onRefresh(data?.summary ?? null);
   }
 
   return (
@@ -227,6 +226,8 @@ export default function ListingCard({
           <motion.img
             src={item.image_url}
             alt=""
+            loading="lazy"
+            decoding="async"
             className="h-full w-full object-cover"
             whileHover={reduce ? undefined : { scale: 1.04 }}
             transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}

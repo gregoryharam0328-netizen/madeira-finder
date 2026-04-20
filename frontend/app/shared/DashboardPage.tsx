@@ -1,17 +1,32 @@
 "use client";
 
 import { AnimatePresence, LayoutGroup, motion, useReducedMotion } from "framer-motion";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import DashboardHeaderControls from "@/components/DashboardHeaderControls";
-import ListingCard from "@/components/ListingCard";
 import Sidebar, { type SidebarNavCounts } from "@/components/Sidebar";
 import StatCard from "@/components/StatCard";
 import { apiFetch } from "@/lib/api";
 import { springSnappy, staggerContainer, staggerItem } from "@/lib/motion";
+
+const LIST_PAGE_SIZE = 24;
+
+const ListingCard = dynamic(() => import("@/components/ListingCard"), {
+  loading: () => (
+    <div className="overflow-hidden rounded-lg border border-brand-200 bg-white shadow-card">
+      <div className="aspect-[4/3] animate-pulse bg-gradient-to-br from-brand-100 to-brand-50" />
+      <div className="space-y-2 border-t border-brand-100 p-4">
+        <div className="h-5 w-3/5 max-w-[12rem] animate-pulse rounded bg-brand-100" />
+        <div className="h-4 w-full animate-pulse rounded bg-brand-100" />
+        <div className="h-4 w-4/5 animate-pulse rounded bg-brand-100" />
+      </div>
+    </div>
+  ),
+});
 
 type Filters = {
   area: string;
@@ -42,13 +57,44 @@ function formatScanTime(iso: string | null | undefined) {
   });
 }
 
-function buildListingsPath(endpoint: string, filters: Filters, workflowFromUrl: string | null) {
-  if (
-    endpoint === "/listings/saved" ||
-    endpoint === "/listings/price-changes" ||
-    endpoint === "/listings/not-interested"
-  ) {
-    return endpoint;
+function dedupeListingGroups(items: any[]): any[] {
+  const seen = new Set<string>();
+  return items.filter((i) => {
+    const id = String(i?.listing_group_id ?? "");
+    if (!id || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+/** Listings API path with server-side pagination (limit/offset). */
+function buildListingsPath(
+  endpoint: string,
+  filters: Filters,
+  workflowFromUrl: string | null,
+  page: { limit: number; offset: number },
+) {
+  const { limit, offset } = page;
+
+  if (endpoint === "/listings/saved") {
+    const p = new URLSearchParams();
+    p.set("limit", String(limit));
+    if (offset > 0) p.set("offset", String(offset));
+    return `${endpoint}?${p.toString()}`;
+  }
+
+  if (endpoint === "/listings/price-changes") {
+    const p = new URLSearchParams();
+    p.set("limit", String(limit));
+    if (offset > 0) p.set("offset", String(offset));
+    return `${endpoint}?${p.toString()}`;
+  }
+
+  if (endpoint === "/listings/not-interested") {
+    const p = new URLSearchParams();
+    p.set("limit", String(limit));
+    if (offset > 0) p.set("offset", String(offset));
+    return `${endpoint}?${p.toString()}`;
   }
 
   const p = new URLSearchParams();
@@ -66,8 +112,10 @@ function buildListingsPath(endpoint: string, filters: Filters, workflowFromUrl: 
     if (filters.sort && filters.sort !== "newest") p.set("sort", filters.sort);
   }
 
-  const qs = p.toString();
-  return qs ? `${endpoint}?${qs}` : endpoint;
+  p.set("limit", String(limit));
+  if (offset > 0) p.set("offset", String(offset));
+
+  return `${endpoint}?${p.toString()}`;
 }
 
 function DashboardPageInner({ endpoint, title }: { endpoint: string; title: string }) {
@@ -88,12 +136,16 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
     bedrooms: "2",
     sort: "newest",
   });
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const itemsRef = useRef<any[]>([]);
 
   const workflowFromUrl =
     pathname === "/dashboard/all" ? (searchParams.get("workflow") || "").toLowerCase() || null : null;
 
-  const listingsUrl = useMemo(
-    () => buildListingsPath(endpoint, filters, workflowFromUrl),
+  const fetchListings = useCallback(
+    (limit: number, offset: number) =>
+      apiFetch(buildListingsPath(endpoint, filters, workflowFromUrl, { limit, offset })),
     [endpoint, filters, workflowFromUrl],
   );
 
@@ -156,22 +208,38 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
     return null;
   }, [endpoint, summary]);
 
-  const loadDashboard = useCallback((options?: { showLoading?: boolean }) => {
-    const showLoading = options?.showLoading ?? true;
-    if (showLoading) setLoading(true);
-    setError("");
-    return Promise.all([apiFetch(listingsUrl), apiFetch("/dashboard/summary")])
-      .then(([listings, dashboard]) => {
-        setItems(Array.isArray(listings) ? listings : []);
-        setSummary(dashboard);
-      })
-      .catch((err) => {
-        setError(err?.message || "Failed to load dashboard");
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [listingsUrl]);
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  const loadDashboard = useCallback(
+    (options?: { showLoading?: boolean }) => {
+      const showLoading = options?.showLoading ?? true;
+      if (showLoading) setLoading(true);
+      setError("");
+      return Promise.allSettled([fetchListings(LIST_PAGE_SIZE, 0), apiFetch("/dashboard/summary")])
+        .then((results) => {
+          const [lr, sr] = results;
+          if (lr.status === "fulfilled") {
+            const listings = lr.value;
+            const chunk = Array.isArray(listings) ? listings : [];
+            setItems(chunk);
+            setHasMore(chunk.length === LIST_PAGE_SIZE);
+          }
+          if (sr.status === "fulfilled") {
+            setSummary(sr.value);
+          }
+          const msgs: string[] = [];
+          if (lr.status === "rejected") msgs.push(lr.reason?.message || "Listings request failed");
+          if (sr.status === "rejected") msgs.push(sr.reason?.message || "Summary request failed");
+          setError(msgs.length ? msgs.join(" · ") : "");
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    },
+    [fetchListings],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -182,6 +250,70 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
       cancelled = true;
     };
   }, [loadDashboard]);
+
+  /**
+   * After star / status changes: apply `summary` from the action response when present (same DB snapshot as the
+   * mutation) so Favourites / Not interested counts cannot lag; then resync the listing grid.
+   */
+  const refreshAfterListingAction = useCallback(
+    async (embeddedSummary?: Record<string, unknown> | null) => {
+      setError("");
+      const n = itemsRef.current.length;
+      const limit = Math.min(200, Math.max(LIST_PAGE_SIZE, n));
+      const msgs: string[] = [];
+      if (embeddedSummary && typeof embeddedSummary === "object") {
+        setSummary(embeddedSummary);
+      } else {
+        try {
+          const s = await apiFetch("/dashboard/summary");
+          setSummary(s);
+        } catch (e) {
+          msgs.push(e instanceof Error ? e.message : "Summary request failed");
+        }
+      }
+      try {
+        const lr = await fetchListings(limit, 0);
+        const chunk = Array.isArray(lr) ? lr : [];
+        setItems(chunk);
+        setHasMore(chunk.length === limit && limit < 200);
+      } catch (e) {
+        msgs.push(e instanceof Error ? e.message : "Listings request failed");
+      }
+      setError(msgs.length ? msgs.join(" · ") : "");
+    },
+    [fetchListings],
+  );
+
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loadingMore || loading) return;
+    setLoadingMore(true);
+    setError("");
+    try {
+      const offset = itemsRef.current.length;
+      const raw = await fetchListings(LIST_PAGE_SIZE, offset);
+      const chunk = Array.isArray(raw) ? raw : [];
+      setItems((prev) => dedupeListingGroups([...prev, ...chunk]));
+      setHasMore(chunk.length === LIST_PAGE_SIZE);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load more listings");
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [fetchListings, hasMore, loading, loadingMore]);
+
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = loadMoreSentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) void loadMore();
+      },
+      { root: null, rootMargin: "240px", threshold: 0 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [loadMore]);
 
   useEffect(() => {
     let cancelled = false;
@@ -611,10 +743,14 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
                       key={item.listing_group_id}
                       item={item}
                       variant={endpoint === "/listings/new" ? "new_today" : "default"}
-                      onRefresh={() => loadDashboard({ showLoading: false })}
+                      onRefresh={refreshAfterListingAction}
                     />
                   ))}
                 </motion.div>
+                {hasMore ? <div ref={loadMoreSentinelRef} className="h-4 w-full shrink-0" aria-hidden /> : null}
+                {loadingMore ? (
+                  <p className="py-4 text-center text-xs font-medium text-brand-500">Loading more listings…</p>
+                ) : null}
               </LayoutGroup>
             )}
           </AnimatePresence>
