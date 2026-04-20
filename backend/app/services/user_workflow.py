@@ -54,6 +54,11 @@ def sync_flags_for_workflow(state: UserListingState, workflow: str) -> None:
     else:
         state.is_hidden = False
         state.hidden_at = None
+        # Match unsave semantics: leaving "Favourite" for Seen / Unreviewed clears the star so
+        # GET /dashboard/summary "saved" and the sidebar Favourites count track the heart.
+        if workflow in ("new", "seen"):
+            state.is_saved = False
+            state.saved_at = None
 
     if workflow == "seen":
         state.is_seen = True

@@ -8,6 +8,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models import ListingGroup, User, UserListingState
 from app.schemas import ListingStatePatch
+from app.services.dashboard_summary import build_dashboard_summary
 from app.services.user_workflow import WORKFLOW_STATUSES, sync_flags_for_workflow
 
 router = APIRouter()
@@ -35,7 +36,7 @@ def save_listing(listing_group_id: UUID, db: Session = Depends(get_db), current_
     state.is_hidden = False
     state.hidden_at = None
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "summary": build_dashboard_summary(db, current_user.id).model_dump(mode="json")}
 
 
 @router.post("/{listing_group_id}/unsave")
@@ -48,7 +49,7 @@ def unsave_listing(listing_group_id: UUID, db: Session = Depends(get_db), curren
         state.is_seen = True
         state.seen_at = datetime.utcnow()
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "summary": build_dashboard_summary(db, current_user.id).model_dump(mode="json")}
 
 
 @router.post("/{listing_group_id}/seen")
@@ -78,7 +79,7 @@ def hide_listing(listing_group_id: UUID, db: Session = Depends(get_db), current_
     state = get_or_create_state(db, current_user.id, listing_group_id)
     sync_flags_for_workflow(state, "not_interested")
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "summary": build_dashboard_summary(db, current_user.id).model_dump(mode="json")}
 
 
 @router.post("/{listing_group_id}/unhide")
@@ -88,7 +89,7 @@ def unhide_listing(listing_group_id: UUID, db: Session = Depends(get_db), curren
     state.hidden_at = None
     state.workflow_status = "new"
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "summary": build_dashboard_summary(db, current_user.id).model_dump(mode="json")}
 
 
 @router.patch("/{listing_group_id}/state")
@@ -99,7 +100,8 @@ def patch_listing_state(
     current_user: User = Depends(get_current_user),
 ):
     state = get_or_create_state(db, current_user.id, listing_group_id)
-    if body.workflow_status is not None:
+    workflow_changed = body.workflow_status is not None
+    if workflow_changed:
         if body.workflow_status not in WORKFLOW_STATUSES:
             raise HTTPException(status_code=400, detail="Invalid workflow_status")
         sync_flags_for_workflow(state, body.workflow_status)
@@ -107,4 +109,6 @@ def patch_listing_state(
         state.note = body.note
     db.flush()
     db.commit()
+    if workflow_changed:
+        return {"ok": True, "summary": build_dashboard_summary(db, current_user.id).model_dump(mode="json")}
     return {"ok": True}

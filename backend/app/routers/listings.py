@@ -149,6 +149,8 @@ def new_today(
 @router.get("/saved")
 def saved(
     exclude_hidden: bool = Query(False),
+    limit: int = Query(200, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -156,7 +158,7 @@ def saved(
     query = query.filter(Listing.is_active.is_(True), Listing.eligibility_status == "eligible")
     if exclude_hidden:
         query = filter_visible_on_main_feed(query)
-    rows = query.order_by(Listing.first_seen_at.desc()).all()
+    rows = query.order_by(Listing.first_seen_at.desc()).offset(offset).limit(limit).all()
     return serialize_listing_rows(db, rows)
 
 
