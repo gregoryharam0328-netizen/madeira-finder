@@ -95,6 +95,16 @@ function isNewTodayFromIso(firstSeenAt: string | null | undefined) {
   );
 }
 
+/** Portal listing date if present, else first scrape (ISO from API). Shown as "Listed: 20 Apr 2026". */
+function formatListedLabel(publishedAt: string | null | undefined, firstSeenAt: string | null | undefined) {
+  const iso = (publishedAt && String(publishedAt).trim()) || (firstSeenAt && String(firstSeenAt).trim()) || "";
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const formatted = d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return `Listed: ${formatted}`;
+}
+
 export default function ListingCard({
   item,
   onRefresh,
@@ -126,6 +136,10 @@ export default function ListingCard({
 
   const headline = useMemo(() => cardHeadline(item), [item.property_type, item.bedrooms]);
   const descBlurb = useMemo(() => microBlurb(item.description, 2, 28), [item.description]);
+  const listedLabel = useMemo(
+    () => formatListedLabel(item.published_at, item.first_seen_at),
+    [item.published_at, item.first_seen_at],
+  );
 
   const listingUrl = useMemo(() => {
     const s = (item.source_url || "").trim();
@@ -284,6 +298,15 @@ export default function ListingCard({
           <span className="rounded-full bg-brand-100 px-2 py-0.5 font-medium">{areaPill}</span>
           <span className="rounded-full bg-brand-100 px-2 py-0.5 font-medium">{item.primary_source || "Source"}</span>
         </div>
+
+        {listedLabel ? (
+          <p
+            className="mt-2.5 rounded-md border border-sky-200/80 bg-sky-50 px-2.5 py-1.5 text-xs font-medium text-brand-900"
+            title={item.published_at ? "Date from the property portal when available" : "First seen in our scans (portal date not available)"}
+          >
+            {listedLabel}
+          </p>
+        ) : null}
 
         <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-brand-500">Status</label>
         <select
