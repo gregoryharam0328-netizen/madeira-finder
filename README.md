@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Madeira Property Finder Tool
 
 A full-stack MVP codebase for a private property discovery assistant tailored to the client's requirements:
@@ -117,3 +118,7 @@ against PostgreSQL or Supabase.
 ## License
 
 Private client project scaffold.
+=======
+# madeira-finder
+Exploring Madeira  Property discovery dashboard
+>>>>>>> d24a1c0515188def798485c3b4620772c663e7a4
