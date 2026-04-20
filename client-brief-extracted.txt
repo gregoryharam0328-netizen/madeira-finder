@@ -1,0 +1,125 @@
+**Project: Madeira Property Finder TOOL**
+I’m looking for someone to build a simple but effective tool that helps me find property in Madeira without manually searching every day.
+### Context (Why this exists)
+I’m actively looking for a **house or apartment in Madeira** for my family, with a budget between **€260,000 and €350,000**.
+Right now, the process is inefficient:
+* Multiple websites
+* Repeated listings showing up again and again
+* No way to track what I’ve already seen
+* Time-consuming to stay consistent daily
+I don’t have time to manually search every day, so I want to automate this properly.
+I’ve already tried using scrapers (apify) connected to Airtable + Make for email alerts, but it’s not working reliably and not very usable.
+What I want now is something more solid, and ideally with a **clean, visual UI**.
+UI example.
+---
+### Core Goal
+Build a system that acts like a **daily property discovery assistant** for Madeira.
+Every day it should:
+* Search multiple property sources
+* Find relevant listings
+* Filter by my criteria
+* Remove duplicates / already seen listings
+* Show me only **new opportunities**
+---
+### Requirements
+#### Search Criteria
+* Location: Madeira Island
+2 bedrooms & more
+* Property type: Houses + Apartments
+* Budget: €260,000 – €350,000
+* Listings must be **for sale only**
+---
+### Data Sources
+The system should scan:
+* Portuguese property portals (Idealista-style sites)
+* Local Madeira estate agency websites
+* Facebook Marketplace (property for sale)
+---
+### Core Features
+#### 1. Daily Automation
+* Runs automatically every day
+* Pulls new listings from all sources
+* No manual triggering
+#### 2. De-duplication (VERY IMPORTANT)
+The system must track listings already seen and avoid repeats.
+Use:
+* URL
+* Listing ID (if available)
+* Title + price + location fallback
+* Any additional matching logic
+If a listing changes, ideally flag:
+* Price change
+* Updated listing
+* Back on market
+---
+#### 3. Morning Email Digest
+Every morning I receive:
+* Only NEW listings (not repeats)
+Each listing should include:
+* Title
+* Price
+* Location
+* Bedrooms (if available)
+* Property type
+* Image
+* Short description
+* Source
+* Link
+ALSO VERY IMPORTANT MY PARTNER CAN LOGIN FROM LONDON ONTO WHAT WE CREATE AND ALSO SEE USE THE PRODUCT.
+---
+#### 4. Visual Dashboard (Important)
+I want a simple UI (not just Airtable or spreadsheets).
+Something clean where I can:
+* View today’s new listings
+* See all listings found
+* Track what I’ve already seen
+* Save / favourite properties
+* Possibly filter (area, price, type)
+The UI matters — I want something easy and visual, not clunky.
+---
+### Tech Direction (Flexible)
+I’m open to how this is built.
+Could be:
+* Scrapers / APIs
+* Database to track listings
+* Daily scheduled jobs
+* Email system
+* Lightweight web dashboard
+I’m flexible — just needs to work reliably.
+---
+### Nice-to-Have Features (Later)
+Not essential for version 1:
+* WhatsApp alerts for standout deals
+* Map view
+* Notes per property
+* AI summary of listings
+* Auto-translate Portuguese descriptions
+* Tagging system (e.g. “good deal”, “needs renovation”)
+---
+### Budget / Practical Reality
+I understand:
+* There will be costs (APIs, scraping, hosting, credits, etc.)
+* This may require ongoing monthly costs
+* This isn’t a “free tool”
+I’m open to:
+* Paying for build
+* Paying for ongoing improvements
+* Covering running costs
+Main goal is to **get something working properly first**.
+---
+### What Success Looks Like
+Every morning I open my email or dashboard and see:
+“These are the new Madeira properties today within your budget that you haven’t seen yet.”
+No duplicates. No noise. Just clean deal flow.
+---
+### Who I’m Looking For
+Someone who:
+* Can actually build and ship this (not just theory)
+* Understands scraping / automation / simple UI
+* Can keep it clean and simple (not over-engineered)
+* Ideally has built similar tools before
+---
+### Final Note
+I know tools like this are very doable now, especially with modern scraping + automation + lightweight frontends.
+I’ve already tried patching this together with no-code tools and it’s not cutting it — I want someone who can properly build it end-to-end.
+If you can make this work cleanly, this is something I’ll likely keep improving and expanding over time.
