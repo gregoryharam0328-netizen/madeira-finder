@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-me"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 10080
-    backend_cors_origins: str = "https://madeira-frontend.onrender.com/"
+    backend_cors_origins: str = "https://madeira-frontend.onrender.com"
     # Optional regex for dynamic frontend hosts (e.g. Render preview domains).
     backend_cors_origin_regex: str | None = None
 
