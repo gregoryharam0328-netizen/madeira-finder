@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 _raw = [o.strip().rstrip("/") for o in settings.backend_cors_origins.split(",") if o.strip()]
-_dev = ["http://localhost:3000", "http://127.0.0.1:3000", "https://madeira-frontend.onrender.com"]
+_dev = ["http://localhost:3000", "http://127.0.0.1:3000", "https://madeira-frontend.onrender.com/"]
 # Never use "*" with allow_credentials=True (browsers reject it).
 # Union local dev origins with BACKEND_CORS_ORIGINS so a Render-only .env still works locally.
 origins = list(dict.fromkeys(_dev + _raw))
