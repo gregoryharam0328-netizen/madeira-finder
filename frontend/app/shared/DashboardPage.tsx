@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
+import DashboardHeaderControls from "@/components/DashboardHeaderControls";
 import ListingCard from "@/components/ListingCard";
 import Sidebar, { type SidebarNavCounts } from "@/components/Sidebar";
 import StatCard from "@/components/StatCard";
@@ -266,8 +267,8 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
         transition={springSnappy}
         className="border-b border-brand-200 bg-white shadow-header"
       >
-        <div className="flex w-full flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-2">
             <div className="relative h-8 w-8 shrink-0">
               <Image
                 src="/exploring-madeira-logo.png"
@@ -278,15 +279,22 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
                 priority
               />
             </div>
-            <div>
+            <div className="min-w-0">
               <p className="text-xs font-semibold text-ocean-700">Madeira</p>
               <p className="text-sm font-semibold text-brand-900">Property discovery</p>
             </div>
           </div>
-          <p className="max-w-md text-right text-xs text-brand-500">
-            Last scan:{" "}
-            <span className="font-medium text-brand-700">{formatScanTime(summary?.last_scan_at)}</span>
-          </p>
+          <div className="flex flex-wrap items-center justify-end gap-3 sm:gap-4">
+            <p className="hidden max-w-[14rem] text-right text-xs text-brand-500 md:block lg:max-w-none">
+              Last scan:{" "}
+              <span className="font-medium text-brand-700">{formatScanTime(summary?.last_scan_at)}</span>
+            </p>
+            <DashboardHeaderControls
+              lastScanAt={summary?.last_scan_at}
+              newToday={Number(summary?.new_today) || 0}
+              total={Number(summary?.total) || 0}
+            />
+          </div>
         </div>
       </motion.header>
 
