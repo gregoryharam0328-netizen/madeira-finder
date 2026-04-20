@@ -12,6 +12,7 @@ export type SidebarNavCounts = {
   total: number;
   saved: number;
   price_changes: number;
+  not_interested: number;
 };
 
 const NAV_ITEMS: { href: string; label: string; countKey: keyof SidebarNavCounts }[] = [
@@ -19,6 +20,7 @@ const NAV_ITEMS: { href: string; label: string; countKey: keyof SidebarNavCounts
   { href: "/dashboard/all", label: "All listings", countKey: "total" },
   { href: "/dashboard/saved", label: "Favourites", countKey: "saved" },
   { href: "/dashboard/price-changes", label: "Price changes", countKey: "price_changes" },
+  { href: "/dashboard/not-interested", label: "Not interested", countKey: "not_interested" },
 ];
 
 function labelWithCount(label: string, count: number | undefined) {

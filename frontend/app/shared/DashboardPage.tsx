@@ -43,7 +43,11 @@ function formatScanTime(iso: string | null | undefined) {
 }
 
 function buildListingsPath(endpoint: string, filters: Filters, workflowFromUrl: string | null) {
-  if (endpoint === "/listings/saved" || endpoint === "/listings/price-changes") {
+  if (
+    endpoint === "/listings/saved" ||
+    endpoint === "/listings/price-changes" ||
+    endpoint === "/listings/not-interested"
+  ) {
     return endpoint;
   }
 
@@ -126,6 +130,18 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
         </>
       );
     }
+    if (endpoint === "/listings/not-interested") {
+      return (
+        <>
+          Nothing marked as not interested. Dismissed listings stay in the database and appear here — use{" "}
+          <span className="font-medium">Not interested</span> on a card to move it out of{" "}
+          <Link className="font-medium text-ocean-700 underline underline-offset-2" href="/dashboard/all">
+            All listings
+          </Link>
+          .
+        </>
+      );
+    }
     if (endpoint === "/listings/saved") {
       return (
         <>
@@ -140,8 +156,9 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
     return null;
   }, [endpoint, summary]);
 
-  const loadDashboard = useCallback(() => {
-    setLoading(true);
+  const loadDashboard = useCallback((options?: { showLoading?: boolean }) => {
+    const showLoading = options?.showLoading ?? true;
+    if (showLoading) setLoading(true);
     setError("");
     return Promise.all([apiFetch(listingsUrl), apiFetch("/dashboard/summary")])
       .then(([listings, dashboard]) => {
@@ -158,7 +175,7 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
 
   useEffect(() => {
     let cancelled = false;
-    loadDashboard().then(() => {
+    void loadDashboard({ showLoading: true }).then(() => {
       if (cancelled) return;
     });
     return () => {
@@ -168,17 +185,21 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
 
   useEffect(() => {
     let cancelled = false;
-    apiFetch("/dashboard/ingestion-hints")
-      .then((h) => {
-        if (cancelled) return;
-        setIngestionHints(h);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setIngestionHints(null);
-      });
+    // Defer so listings + summary win the network first (faster first paint).
+    const t = window.setTimeout(() => {
+      apiFetch("/dashboard/ingestion-hints")
+        .then((h) => {
+          if (cancelled) return;
+          setIngestionHints(h);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setIngestionHints(null);
+        });
+    }, 350);
     return () => {
       cancelled = true;
+      window.clearTimeout(t);
     };
   }, []);
 
@@ -214,9 +235,20 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
   }
 
   const filterTabs = useMemo(() => {
+    // Order aligned with ListingCard status dropdown; every workflow has a tab.
     const base = [
       { href: "/dashboard/all", label: "All", match: (p: string, w: string | null) => p === "/dashboard/all" && !w },
       { href: "/dashboard", label: "New today", match: (p: string) => p === "/dashboard" },
+      {
+        href: "/dashboard/all?workflow=new",
+        label: "Unreviewed",
+        match: (p: string, w: string | null) => p === "/dashboard/all" && w === "new",
+      },
+      {
+        href: "/dashboard/all?workflow=seen",
+        label: "Seen",
+        match: (p: string, w: string | null) => p === "/dashboard/all" && w === "seen",
+      },
       { href: "/dashboard/saved", label: "Favourites", match: (p: string) => p === "/dashboard/saved" },
       {
         href: "/dashboard/all?workflow=need_to_call",
@@ -234,20 +266,21 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
         match: (p: string, w: string | null) => p === "/dashboard/all" && w === "offer_made",
       },
       {
-        href: "/dashboard/all?workflow=seen",
-        label: "Seen",
-        match: (p: string, w: string | null) => p === "/dashboard/all" && w === "seen",
+        href: "/dashboard/all?workflow=not_available",
+        label: "Gone",
+        match: (p: string, w: string | null) => p === "/dashboard/all" && w === "not_available",
       },
       {
-        href: "/dashboard/all?workflow=not_available",
-        label: "Not available",
-        match: (p: string, w: string | null) => p === "/dashboard/all" && w === "not_available",
+        href: "/dashboard/all?workflow=not_interested",
+        label: "Not interested",
+        match: (p: string, w: string | null) => p === "/dashboard/all" && w === "not_interested",
       },
     ];
     return base;
   }, []);
 
   const showFilterDropdowns = endpoint === "/listings" || endpoint === "/listings/new";
+  const isNotInterestedView = endpoint === "/listings/not-interested";
 
   const sidebarCounts = useMemo((): SidebarNavCounts | null => {
     if (!summary) return null;
@@ -256,6 +289,7 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
       total: Number(summary.total) || 0,
       saved: Number(summary.saved) || 0,
       price_changes: Number(summary.price_changes ?? 0) || 0,
+      not_interested: Number(summary.not_interested ?? 0) || 0,
     };
   }, [summary]);
 
@@ -325,8 +359,22 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-500">Dashboard</p>
                 <h1 className="mt-1 text-2xl font-semibold text-brand-900 lg:text-[1.65rem]">{title}</h1>
                 <p className="mt-2 max-w-2xl text-sm text-brand-600">
-                  €260,000 – €340,000 · Houses and apartments · For sale · Last scan{" "}
-                  <span className="font-medium text-brand-800">{formatScanTime(summary?.last_scan_at)}</span>
+                  {isNotInterestedView ? (
+                    <>
+                      Listings you marked <span className="font-medium text-brand-800">Not interested</span> stay in
+                      the database. Change status on any card to return it to{" "}
+                      <Link className="font-medium text-ocean-700 underline underline-offset-2" href="/dashboard/all">
+                        All listings
+                      </Link>
+                      . Last scan{" "}
+                      <span className="font-medium text-brand-800">{formatScanTime(summary?.last_scan_at)}</span>
+                    </>
+                  ) : (
+                    <>
+                      €260,000 – €340,000 · Houses and apartments · For sale · Last scan{" "}
+                      <span className="font-medium text-brand-800">{formatScanTime(summary?.last_scan_at)}</span>
+                    </>
+                  )}
                 </p>
               </div>
               <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center lg:flex-col lg:items-end">
@@ -547,9 +595,9 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
                 </Link>
               </motion.div>
             ) : (
-              <LayoutGroup id="listings">
+              <LayoutGroup id={`listings-${endpoint}`}>
                 <motion.div
-                  key="grid"
+                  key={`grid-${endpoint}`}
                   initial={reduce ? false : { opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
@@ -562,7 +610,7 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
                       key={item.listing_group_id}
                       item={item}
                       variant={endpoint === "/listings/new" ? "new_today" : "default"}
-                      onRefresh={() => void loadDashboard()}
+                      onRefresh={() => loadDashboard({ showLoading: false })}
                     />
                   ))}
                 </motion.div>
@@ -582,7 +630,8 @@ export default function DashboardPage(props: { endpoint: string; title: string }
         <main className="min-h-screen bg-brand-50 px-4 py-16 text-center text-sm text-brand-600">Loading dashboard…</main>
       }
     >
-      <DashboardPageInner {...props} />
+      {/* Remount per route so list + summary always match the tab (e.g. Not interested only). */}
+      <DashboardPageInner key={props.endpoint} {...props} />
     </Suspense>
   );
 }

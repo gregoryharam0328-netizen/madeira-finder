@@ -111,7 +111,7 @@ export default function ListingCard({
   variant = "default",
 }: {
   item: any;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
   variant?: "default" | "new_today";
 }) {
   const reduce = useReducedMotion();
@@ -184,7 +184,7 @@ export default function ListingCard({
       method: "PATCH",
       body: JSON.stringify({ workflow_status: next }),
     });
-    onRefresh();
+    await Promise.resolve(onRefresh());
   }
 
   async function toggleStar() {
@@ -193,7 +193,7 @@ export default function ListingCard({
     } else {
       await apiFetch(`/actions/${item.listing_group_id}/save`, { method: "POST" });
     }
-    onRefresh();
+    await Promise.resolve(onRefresh());
   }
 
   return (
