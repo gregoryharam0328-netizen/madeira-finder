@@ -1,27 +1,27 @@
 from datetime import datetime
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 class UserCreate(BaseModel):
     email: EmailStr
     full_name: str | None = None
-    password: str
+    password: str = Field(..., min_length=1, max_length=256)
 
 class UserLogin(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=1, max_length=256)
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
 class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     email: EmailStr
     full_name: str | None = None
     role: str
-    class Config:
-        from_attributes = True
 
 class DashboardSummary(BaseModel):
     new_today: int
