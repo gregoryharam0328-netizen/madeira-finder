@@ -1,4 +1,20 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+function resolveApiUrl() {
+  const envUrl = (process.env.NEXT_PUBLIC_API_URL || "").trim();
+  if (envUrl) return envUrl.replace(/\/+$/, "");
+
+  if (typeof window !== "undefined") {
+    const origin = window.location.origin;
+    // Render production fallback: if frontend env var was not injected at build time,
+    // infer backend host from the known service pair.
+    if (origin === "https://madeira-frontend.onrender.com") {
+      return "https://madeira-backend.onrender.com";
+    }
+  }
+
+  return "http://localhost:8000";
+}
+
+const API_URL = resolveApiUrl();
 
 const FETCH_TIMEOUT_MS = 120_000;
 
