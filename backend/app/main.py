@@ -57,9 +57,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 _raw = [o.strip() for o in settings.backend_cors_origins.split(",") if o.strip()]
-_dev = ["https://madeira-frontend.onrender.com", "https://madeira-backend.onrender.com"]
-# Never use "*" with allow_credentials=True (browsers reject it). If unset, allow local dev.
-origins = _raw if _raw else _dev
+_dev = ["http://localhost:3000", "http://127.0.0.1:3000"]
+# Never use "*" with allow_credentials=True (browsers reject it).
+# Union local dev origins with BACKEND_CORS_ORIGINS so a Render-only .env still works locally.
+origins = list(dict.fromkeys(_dev + _raw))
 origin_regex = (settings.backend_cors_origin_regex or "").strip() or None
 app.add_middleware(
     CORSMiddleware,
