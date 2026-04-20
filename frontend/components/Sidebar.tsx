@@ -2,7 +2,7 @@
 
 import { motion, useReducedMotion } from "framer-motion";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
 import { springSnappy } from "@/lib/motion";
 
@@ -28,8 +28,25 @@ function labelWithCount(label: string, count: number | undefined) {
   return `${label} (${count})`;
 }
 
+function navItemActive(pathname: string | null, workflow: string, itemHref: string): boolean {
+  const p = pathname || "";
+  const w = workflow.toLowerCase();
+  if (itemHref === "/dashboard") {
+    return p === "/dashboard";
+  }
+  if (itemHref === "/dashboard/all") {
+    return p === "/dashboard/all" && w !== "not_interested";
+  }
+  if (itemHref === "/dashboard/not-interested") {
+    return p === "/dashboard/not-interested" || w === "not_interested";
+  }
+  return p === itemHref || (itemHref !== "/dashboard" && p.startsWith(itemHref));
+}
+
 export default function Sidebar({ counts }: { counts?: SidebarNavCounts | null }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const workflow = (searchParams.get("workflow") || "").toLowerCase();
   const reduce = useReducedMotion();
 
   return (
@@ -46,8 +63,7 @@ export default function Sidebar({ counts }: { counts?: SidebarNavCounts | null }
       </div>
       <nav className="flex flex-col gap-0.5 p-2">
         {NAV_ITEMS.map((item, i) => {
-          const active =
-            pathname === item.href || (item.href !== "/dashboard" && pathname?.startsWith(item.href));
+          const active = navItemActive(pathname, workflow, item.href);
           const n = counts ? counts[item.countKey] : undefined;
           return (
             <motion.div

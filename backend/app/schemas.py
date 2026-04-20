@@ -54,6 +54,10 @@ class ListingCardOut(BaseModel):
     title: str
     description: str | None = None
     price: float | None = None
+    price_per_sqm_eur: float | None = Field(
+        None,
+        description="Optional €/m² parsed from the same portal tile as the headline price (not the total ask).",
+    )
     currency: str = "EUR"
     location_text: str | None = None
     area_name: str | None = None

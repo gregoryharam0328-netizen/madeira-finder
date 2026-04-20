@@ -6,7 +6,15 @@ from urllib.parse import urljoin, urlparse
 
 from app.config import settings
 from app.scrapers.base import BaseScraper
-from app.scrapers.http import fetch_html, guess_bedrooms_from_text, guess_property_type_from_text, parse_eur_price, soup
+from app.scrapers.http import (
+    fetch_html,
+    guess_bedrooms_from_text,
+    guess_property_type_from_text,
+    parse_eur_price,
+    parse_price_per_sqm_eur,
+    soup,
+    strip_price_element_decorations,
+)
 
 
 @dataclass(frozen=True)
@@ -87,16 +95,27 @@ class PortalSearchScraper(BaseScraper):
         price_el = card.select_one(self.selectors.price) if self.selectors.price else None
         loc_el = card.select_one(self.selectors.location) if self.selectors.location else None
 
+        if price_el is not None:
+            strip_price_element_decorations(price_el)
+
         title = (title_el.get_text(" ", strip=True) if title_el else None) or None
         price_txt = price_el.get_text(" ", strip=True) if price_el else None
         blob = card.get_text(" ", strip=True)
         price = parse_eur_price(price_txt) or parse_eur_price(blob)
         location = (loc_el.get_text(" ", strip=True) if loc_el else None) or None
+        price_per_sqm = parse_price_per_sqm_eur(price_txt) or parse_price_per_sqm_eur(blob)
 
         hint = " ".join(x for x in (title, location, blob[:800]) if x)
         bedrooms = guess_bedrooms_from_text(hint)
         prop_type = guess_property_type_from_text(hint)
-        return {"title": title, "price": price, "location": location, "bedrooms": bedrooms, "property_type": prop_type}
+        return {
+            "title": title,
+            "price": price,
+            "price_per_sqm_eur": price_per_sqm,
+            "location": location,
+            "bedrooms": bedrooms,
+            "property_type": prop_type,
+        }
 
     def _enrich_meta_from_blob(self, card, meta: dict[str, object | None]) -> dict[str, object | None]:
         blob = card.get_text(" ", strip=True)
@@ -149,21 +168,23 @@ class PortalSearchScraper(BaseScraper):
                 title_from_selector = title_el.get_text(" ", strip=True) if title_el else None
                 title = meta.get("title") or title_from_selector or (a.get_text(" ", strip=True) or "Listing")
                 image_url = self._image_from_card(meta_card, search_url)
-                items.append(
-                    {
-                        "source_listing_id": None,
-                        "url": listing_url,
-                        "title": str(title),
-                        "price": float(meta["price"]),
-                        "currency": "EUR",
-                        "location": meta.get("location"),
-                        "bedrooms": meta.get("bedrooms"),
-                        "property_type": meta.get("property_type") or "other",
-                        "listing_type": "sale",
-                        "description": None,
-                        "image_url": image_url,
-                    }
-                )
+                pps = meta.get("price_per_sqm_eur")
+                row: dict = {
+                    "source_listing_id": None,
+                    "url": listing_url,
+                    "title": str(title),
+                    "price": float(meta["price"]),
+                    "currency": "EUR",
+                    "location": meta.get("location"),
+                    "bedrooms": meta.get("bedrooms"),
+                    "property_type": meta.get("property_type") or "other",
+                    "listing_type": "sale",
+                    "description": None,
+                    "image_url": image_url,
+                }
+                if pps is not None:
+                    row["price_per_sqm_eur"] = float(pps)
+                items.append(row)
 
                 if len(items) >= self.max_listings:
                     return items
@@ -191,23 +212,25 @@ class PortalSearchScraper(BaseScraper):
 
             bedrooms = guess_bedrooms_from_text(f"{title} {parent_text}")
             prop_type = guess_property_type_from_text(f"{title} {parent_text}")
+            pps = parse_price_per_sqm_eur(parent_text)
 
             image_url = self._image_from_card(root, search_url)
-            items.append(
-                {
-                    "source_listing_id": None,
-                    "url": listing_url,
-                    "title": title,
-                    "price": float(price),
-                    "currency": "EUR",
-                    "location": None,
-                    "bedrooms": bedrooms,
-                    "property_type": prop_type or "other",
-                    "listing_type": "sale",
-                    "description": None,
-                    "image_url": image_url,
-                }
-            )
+            row_fb: dict = {
+                "source_listing_id": None,
+                "url": listing_url,
+                "title": title,
+                "price": float(price),
+                "currency": "EUR",
+                "location": None,
+                "bedrooms": bedrooms,
+                "property_type": prop_type or "other",
+                "listing_type": "sale",
+                "description": None,
+                "image_url": image_url,
+            }
+            if pps is not None:
+                row_fb["price_per_sqm_eur"] = float(pps)
+            items.append(row_fb)
 
             if len(items) >= self.max_listings:
                 break

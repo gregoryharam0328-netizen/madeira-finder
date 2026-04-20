@@ -2,7 +2,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from app.win_asyncio import apply_windows_proactor_policy
+from app.win_asyncio import apply_windows_proactor_policy, install_windows_proactor_reset_noise_handler
 
 apply_windows_proactor_policy()
 
@@ -27,6 +27,7 @@ except Exception:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    install_windows_proactor_reset_noise_handler(asyncio.get_running_loop())
     # 1) If we missed today's successful scheduled run, ingest once now ("today" data).
     if settings.enable_startup_daily_catchup:
         await asyncio.to_thread(ensure_today_ingestion_if_missed)

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -229,3 +229,38 @@ def repair_listings_from_raw(
         "repaired": n,
         "message": f"Updated {n} listing(s) from raw scrape payloads where price or image was wrong.",
     }
+
+
+@router.post("/refetch-listing-prices")
+def refetch_listing_prices(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    limit: int = Query(300, ge=1, le=500, description="Max listings to process in one call."),
+    delay_seconds: float = Query(0.7, ge=0.0, le=5.0, description="Pause between HTTP fetches to avoid hammering portals."),
+    suspicious_only: bool = Query(
+        True,
+        description="If true, only rows with price NULL, < €20k, or > €2M (typical bad card parses).",
+    ),
+    source_name_contains: str | None = Query(
+        "imovirtual",
+        description="Substring match on source.name; pass * or all to include every source (slow).",
+    ),
+):
+    """
+    Re-open each listing's public URL, parse the asking price with current rules, and update
+    ``listings`` plus the linked ``listings_raw`` snapshot. Use after fixing scraper logic when
+    the DB still holds old inflated prices.
+    """
+    from app.services.listing_price_refetch import refetch_suspicious_listing_prices
+
+    src_in = (source_name_contains or "").strip()
+    src = None if src_in.lower() in ("*", "all") else src_in or None
+    stats = refetch_suspicious_listing_prices(
+        db,
+        limit=limit,
+        delay_seconds=delay_seconds,
+        suspicious_only=suspicious_only,
+        source_name_contains=src,
+    )
+    db.commit()
+    return {"ok": True, **stats, "message": "Price refetch finished; see updated / skipped counts."}

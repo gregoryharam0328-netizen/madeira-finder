@@ -7,7 +7,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.models import Listing, ListingEvent, ListingGroup, ListingGroupMember, Source, UserListingState
+from app.models import Listing, ListingEvent, ListingGroup, ListingGroupMember, ListingRaw, Source, UserListingState
 from app.schemas import ListingCardOut, PortalLinkOut
 from app.services.user_workflow import effective_workflow
 
@@ -45,6 +45,36 @@ def batch_price_reduced(db: Session, listing_ids: list[UUID]) -> dict[UUID, bool
     return out
 
 
+def batch_price_per_sqm_from_raw(db: Session, listing_ids: list[UUID]) -> dict[UUID, float | None]:
+    """Read optional ``price_per_sqm_eur`` from the latest raw scrape payload linked to each listing."""
+    out: dict[UUID, float | None] = {lid: None for lid in listing_ids}
+    if not listing_ids:
+        return out
+    pairs = (
+        db.query(Listing.id, Listing.raw_listing_id)
+        .filter(Listing.id.in_(listing_ids), Listing.raw_listing_id.isnot(None))
+        .all()
+    )
+    if not pairs:
+        return out
+    rid_by_lid = dict(pairs)
+    raw_ids = list({rid for rid in rid_by_lid.values() if rid})
+    if not raw_ids:
+        return out
+    rows = db.query(ListingRaw.id, ListingRaw.raw_payload_json).filter(ListingRaw.id.in_(raw_ids)).all()
+    payload_by_rid = {rid: (pj or {}) for rid, pj in rows}
+    for lid, rid in rid_by_lid.items():
+        pj = payload_by_rid.get(rid) or {}
+        v = pj.get("price_per_sqm_eur")
+        if v is None:
+            continue
+        try:
+            out[lid] = float(v)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def batch_group_portal_links(db: Session, group_ids: list[UUID]) -> dict[UUID, list[tuple[str, str]]]:
     """Per listing_group_id: unique (source name, source_url) for active member listings."""
     if not group_ids:
@@ -74,6 +104,7 @@ def batch_group_portal_links(db: Session, group_ids: list[UUID]) -> dict[UUID, l
 def serialize_listing_rows(db: Session, rows: list) -> list[ListingCardOut]:
     listing_ids = [r[1].id for r in rows]
     reduced = batch_price_reduced(db, listing_ids)
+    per_sqm_by_listing = batch_price_per_sqm_from_raw(db, listing_ids)
     group_ids = [r[0].id for r in rows]
     portal_by_group = batch_group_portal_links(db, group_ids)
     out: list[ListingCardOut] = []
@@ -87,6 +118,7 @@ def serialize_listing_rows(db: Session, rows: list) -> list[ListingCardOut]:
                 title=listing.title,
                 description=_trim_description_for_list_card(listing.description),
                 price=float(listing.price) if listing.price is not None else None,
+                price_per_sqm_eur=per_sqm_by_listing.get(listing.id),
                 currency=listing.currency,
                 location_text=listing.location_text,
                 area_name=listing.area_name,

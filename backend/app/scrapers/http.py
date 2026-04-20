@@ -4,7 +4,7 @@ import logging
 import re
 from dataclasses import dataclass
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from curl_cffi import requests as curl_requests
 from playwright.sync_api import sync_playwright
 
@@ -111,6 +111,10 @@ def soup(html: str) -> BeautifulSoup:
 # Ignore per-m² lines and breadcrumb digits when picking a list price from noisy HTML.
 _MIN_PLAUSIBLE_LISTING_EUR = 3_000.0
 _MAX_PLAUSIBLE_LISTING_EUR = 50_000_000.0
+# Typical residential ask; used to prefer the real ask when the card text also contains spurious huge numbers.
+_DEFAULT_SOFT_CAP_EUR = 2_500_000.0
+# PT cards sometimes concatenate a small prefix (e.g. gallery "(15)") before "275 000 €", yielding "15 275 000 €".
+_DEJUNK_PREFIX_MIN_PARSED_EUR = 12_000_000.0
 
 
 def _parse_single_price_token(raw: str) -> float | None:
@@ -136,7 +140,227 @@ def _parse_single_price_token(raw: str) -> float | None:
     return v
 
 
-def parse_eur_price(text: str | None) -> float | None:
+def _variants_space_grouped_pt_price(
+    raw: str,
+    *,
+    soft_cap_eur: float | None = _DEFAULT_SOFT_CAP_EUR,
+    min_tail_eur: float = 50_000.0,
+    glue_ratio: float = 25.0,
+) -> list[float]:
+    """
+    Parse a PT-style space-grouped amount and, when the full span looks **inflated** past
+    ``soft_cap_eur``, add **tail** candidates (e.g. gallery ``36`` + ``495 000`` → ``36 495 000``).
+
+    Tails are only added when ``whole / tail > glue_ratio`` so real asks like ``8 500 000`` €
+    (8.5M) are not split into a bogus ``500 000`` tail.
+    """
+    raw = (raw or "").strip().replace("\xa0", " ")
+    if not raw:
+        return []
+    seen: set[float] = set()
+    out: list[float] = []
+
+    def push(v: float | None) -> None:
+        if v is None or v in seen:
+            return
+        seen.add(v)
+        out.append(v)
+
+    parts = raw.split()
+    if len(parts) >= 2 and all(re.fullmatch(r"\d{1,3}", p) for p in parts):
+        whole_raw = " ".join(parts)
+        v_whole = _parse_single_price_token(whole_raw)
+        for k in range(0, len(parts)):
+            tail = " ".join(parts[k:])
+            if not re.fullmatch(r"\d{1,3}(?:\s+\d{3})+", tail):
+                continue
+            vt = _parse_single_price_token(tail)
+            if vt is None:
+                continue
+            if k == 0:
+                push(vt)
+                continue
+            if soft_cap_eur is None:
+                push(vt)
+                continue
+            if v_whole is None or v_whole <= soft_cap_eur:
+                continue
+            if vt < min_tail_eur or vt > soft_cap_eur:
+                continue
+            if v_whole / vt <= glue_ratio:
+                continue
+            push(vt)
+        return out
+    push(_parse_single_price_token(raw))
+    return out
+
+
+def _drop_subsumed_currency_group_matches(matches: list[re.Match[str]], *, group: int = 1) -> list[re.Match[str]]:
+    """Remove shorter ``N NN NNN`` spans that are strictly inside another match (avoids ``500 000`` inside ``12 500 000``)."""
+    if len(matches) <= 1:
+        return matches
+    spans = [(m.start(group), m.end(group)) for m in matches]
+    out: list[re.Match[str]] = []
+    for i, m in enumerate(matches):
+        a, b = spans[i]
+        subsumed = False
+        for j in range(len(matches)):
+            if i == j:
+                continue
+            sa, sb = spans[j]
+            if sa <= a and b <= sb and (sa < a or sb > b):
+                subsumed = True
+                break
+        if not subsumed:
+            out.append(m)
+    return out
+
+
+def _choose_price_candidate(values: list[float], *, soft_cap_eur: float | None) -> float | None:
+    if not values:
+        return None
+    if soft_cap_eur is not None:
+        under = [v for v in values if v <= soft_cap_eur]
+        if under:
+            return max(under)
+    return max(values)
+
+
+def parse_price_per_sqm_eur(text: str | None) -> float | None:
+    """
+    Parse a portal's ``€/m²`` figure from the price tile (e.g. ``1 719 €/m²`` next to ``275 000 €``).
+
+    Uses a looser numeric range than total-ask parsing (per-m² is usually hundreds–low thousands).
+    """
+    if not text:
+        return None
+    t = text.replace("\xa0", " ")
+    m = re.search(
+        r"(\d{1,3}(?:\s+\d{3})*(?:[.,]\d{1,2})?|\d{3,5})\s*(?:€|eur)?\s*/\s*m\s*[²2]\b",
+        t,
+        re.I,
+    )
+    if not m:
+        return None
+    raw = m.group(1).strip()
+    compact = raw.replace(" ", "").replace("\u00a0", "")
+    if re.fullmatch(r"\d{1,3}(?:\.\d{3})+", compact):
+        compact = compact.replace(".", "")
+    elif re.fullmatch(r"\d{1,3}(?:,\d{3})+", compact):
+        compact = compact.replace(",", "")
+    if compact.count(",") == 1 and compact.count(".") == 0 and re.search(r",\d{1,2}$", compact):
+        compact = compact.replace(",", ".")
+    try:
+        v = float(compact)
+    except ValueError:
+        return None
+    if not (120.0 <= v <= 35_000.0):
+        return None
+    return v
+
+
+def strip_price_per_sqm_suffix(text: str) -> str:
+    """Drop a trailing ``… 1 719 €/m²`` fragment so list-price parsing does not see two € amounts."""
+    if not text:
+        return text
+    parts = re.split(
+        r"\s+(?:\d[\d\s.\u00a0]{0,14}\s*(?:€\s*)?/\s*m\s*²|\d[\d\s.\u00a0]{0,14}\s*(?:€\s*)?/\s*m2\b)",
+        text,
+        maxsplit=1,
+        flags=re.I,
+    )
+    return parts[0].strip()
+
+
+def strip_price_element_decorations(price_el: Tag | None) -> None:
+    """
+    Remove gallery / photo-count chips portals embed inside the price container so
+    ``get_text`` does not prepend ``30`` to ``360 000 €`` (in-place on the tag tree).
+    """
+    if price_el is None or not isinstance(price_el, Tag):
+        return
+    gallery_tokens = (
+        "photo",
+        "picture",
+        "gallery",
+        "image-count",
+        "image_count",
+        "imagens",
+        "fotos",
+        "swiper",
+        "carousel",
+    )
+    protected = ("ad-price", "listing-item-price", "offer-price", "listing-price", "price-value")
+
+    for tag in list(price_el.find_all(attrs={"data-cy": True})):
+        if tag is price_el:
+            continue
+        cy = str(tag.get("data-cy") or "").lower()
+        if any(p in cy for p in protected) and not any(g in cy for g in gallery_tokens):
+            continue
+        if any(g in cy for g in gallery_tokens):
+            tag.decompose()
+            continue
+
+    for tag in list(price_el.find_all(True)):
+        if tag is price_el:
+            continue
+        cls = " ".join(tag.get("class") or []).lower()
+        if not cls:
+            continue
+        if any(g in cls for g in ("photocount", "photo-count", "gallery-count", "image-count", "picture-count")):
+            tag.decompose()
+
+
+def dejunk_concatenated_listing_price(
+    text: str,
+    *,
+    soft_cap_eur: float = _DEFAULT_SOFT_CAP_EUR,
+) -> str:
+    """
+    Repair price lines where a small integer was merged before a PT-grouped ask (e.g. ``15`` + ``275 000 €``).
+    Only rewrites matches that parse as very large (see threshold) so genuine ~12M asks stay intact.
+    """
+    if not text:
+        return text
+    out: list[str] = []
+    last = 0
+    for m in re.finditer(r"(\d{1,3}(?:\s+\d{3})+)\s*(?:€|eur)\b", text, re.I):
+        raw = m.group(1)
+        v = _parse_single_price_token(raw)
+        repl_body = raw
+        if (
+            v is not None
+            and v >= _DEJUNK_PREFIX_MIN_PARSED_EUR
+            and soft_cap_eur is not None
+            and v > soft_cap_eur
+        ):
+            parts = raw.split()
+            if len(parts) >= 3 and all(re.fullmatch(r"\d{1,3}", p) for p in parts):
+                alt = " ".join(parts[1:])
+                v2 = _parse_single_price_token(alt)
+                # Require the tail to be a small fraction of the inflated parse so we do not turn
+                # a real ``12 500 000`` € ask into ``500 000`` (12 was millions, not a photo count).
+                if (
+                    v2 is not None
+                    and v is not None
+                    and v > 0
+                    and 50_000 <= v2 <= soft_cap_eur
+                    and (v2 / v) < 0.03
+                ):
+                    repl_body = alt
+        out.append(text[last : m.start(1)])
+        out.append(repl_body)
+        last = m.end(1)
+    out.append(text[last:])
+    return "".join(out)
+
+
+def parse_eur_price(
+    text: str | None,
+    *,
+    soft_cap_eur: float | None = _DEFAULT_SOFT_CAP_EUR,
+) -> float | None:
     """
     Extract a plausible total asking price from noisy card HTML.
 
@@ -146,40 +370,80 @@ def parse_eur_price(text: str | None) -> float | None:
     """
     if not text:
         return None
-    t = text.replace("\xa0", " ")
-    candidates: list[float] = []
+    t = dejunk_concatenated_listing_price(strip_price_per_sqm_suffix(text.replace("\xa0", " ")))
+    euro_vals: list[float] = []
+    other_vals: list[float] = []
 
-    def add_if_plausible(raw: str) -> None:
+    def add_euro_raw(raw: str) -> None:
         v = _parse_single_price_token(raw)
         if v is not None:
-            candidates.append(v)
+            euro_vals.append(v)
 
-    # Strong signals: amount next to € (PT often "242 500 €" or "€ 242 500")
-    for m in re.finditer(r"€\s*([\d\s.\u00a0]{4,22})", t):
-        add_if_plausible(m.group(1))
-    for m in re.finditer(r"([\d\s.\u00a0]{4,22})\s*€", t):
-        add_if_plausible(m.group(1))
+    def extend_euro_from_grouped(raw: str) -> None:
+        for v in _variants_space_grouped_pt_price(raw, soft_cap_eur=soft_cap_eur):
+            euro_vals.append(v)
 
-    # Grouped thousands with spaces: 242 500
-    for m in re.finditer(r"\b\d{1,3}(?:\s+\d{3})+(?:,\d{2})?\b", t):
-        span = m.group(0)
-        end = m.end()
-        tail = t[end : end + 12].lower()
-        if "m²" in tail or "/m" in tail or "m2" in tail or "eur/m" in tail:
-            continue
-        add_if_plausible(span)
+    def add_other_val(v: float) -> None:
+        other_vals.append(v)
 
-    # Dotted thousands: 242.500
-    for m in re.finditer(r"\b\d{1,3}(?:\.\d{3})+(?:,\d{2})?\b", t):
-        add_if_plausible(m.group(0))
+    # Prefer PT space-grouped amounts next to € / EUR so "T3 275 000 €" is not read as "3 275 000 €".
+    _ccy = r"(?:€|eur)"
+    _eur_grouped = r"\d{1,3}(?:\s+\d{3})+(?:,\d{2})?"
+    for m in re.finditer(rf"{_ccy}\s*({_eur_grouped})", t, re.I):
+        extend_euro_from_grouped(m.group(1))
+    trail_ccy = list(re.finditer(rf"(?:^|[^\w])({_eur_grouped})\s*{_ccy}\b", t, re.I))
+    for m in _drop_subsumed_currency_group_matches(trail_ccy):
+        extend_euro_from_grouped(m.group(1))
 
-    # Plain large integers (Idealista-style)
-    for m in re.finditer(r"\b(\d{5,8})\b", t):
-        add_if_plausible(m.group(1))
+    if not euro_vals:
+        # Fallback for portals that omit thousand spaces (e.g. "€242500")
+        for m in re.finditer(rf"{_ccy}\s*([\d\s.\u00a0]{{4,22}})", t, re.I):
+            inner = m.group(1).strip().replace("\xa0", " ")
+            if re.fullmatch(r"\d{1,3}(?:\s+\d{3})+", inner):
+                extend_euro_from_grouped(inner)
+            else:
+                add_euro_raw(inner)
+        trail_loose = list(re.finditer(rf"([\d\s.\u00a0]{{4,22}})\s*{_ccy}\b", t, re.I))
+        for m in _drop_subsumed_currency_group_matches(trail_loose):
+            inner = m.group(1).strip().replace("\xa0", " ")
+            if re.fullmatch(r"\d{1,3}(?:\s+\d{3})+", inner):
+                extend_euro_from_grouped(inner)
+            else:
+                add_euro_raw(inner)
 
-    if not candidates:
-        return None
-    return max(candidates)
+    # Weaker patterns often glue unrelated digits (e.g. image count "15" + "275 000"); only use them if € did not match.
+    if not euro_vals:
+        # Grouped thousands with spaces: 242 500
+        for m in re.finditer(r"\b\d{1,3}(?:\s+\d{3})+(?:,\d{2})?\b", t):
+            span = m.group(0)
+            end = m.end()
+            tail = t[end : end + 12].lower()
+            if "m²" in tail or "/m" in tail or "m2" in tail or "eur/m" in tail:
+                continue
+            for v in _variants_space_grouped_pt_price(span, soft_cap_eur=soft_cap_eur):
+                other_vals.append(v)
+
+        # Dotted thousands: 242.500
+        for m in re.finditer(r"\b\d{1,3}(?:\.\d{3})+(?:,\d{2})?\b", t):
+            v = _parse_single_price_token(m.group(0))
+            if v is not None:
+                other_vals.append(v)
+
+        # Plain large integers (Idealista-style) — skip huge unformatted values (often analytics / listing ids).
+        for m in re.finditer(r"\b(\d{5,8})\b", t):
+            token = m.group(1)
+            if len(token) >= 7:
+                try:
+                    if int(token) >= 10_000_000:
+                        continue
+                except ValueError:
+                    pass
+            v = _parse_single_price_token(token)
+            if v is not None:
+                other_vals.append(v)
+
+    pool = euro_vals if euro_vals else other_vals
+    return _choose_price_candidate(pool, soft_cap_eur=soft_cap_eur)
 
 
 def guess_bedrooms_from_text(text: str | None) -> int | None:

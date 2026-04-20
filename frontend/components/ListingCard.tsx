@@ -130,6 +130,14 @@ export default function ListingCard({
     return `€${Math.round(n).toLocaleString("en-IE")}`;
   }, [item.price]);
 
+  const perSqmLabel = useMemo(() => {
+    const v = item.price_per_sqm_eur;
+    if (v == null) return null;
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n)) return null;
+    return `€${Math.round(n).toLocaleString("en-IE")}/m²`;
+  }, [item.price_per_sqm_eur]);
+
   const areaPill = item.municipality || item.area_name || item.location_text || "Madeira";
   const wf = item.workflow_status || "new";
   const newToday = isNewTodayFromIso(item.first_seen_at);
@@ -252,7 +260,31 @@ export default function ListingCard({
         )}
 
         <div className="mt-3 flex items-start justify-between gap-2">
-          <p className="text-2xl font-bold tabular-nums text-ocean-800">{priceLabel}</p>
+          <div className="min-w-0 flex-1">
+            <p
+              className="text-2xl font-bold tabular-nums text-ocean-800"
+              title={
+                item.price != null
+                  ? "Total asking price from our latest scrape. Open the portal listing to confirm — many sites also show €/m² next to the total."
+                  : undefined
+              }
+            >
+              {priceLabel}
+            </p>
+            {perSqmLabel ? (
+              <p className="mt-1.5 rounded-md border border-sky-100 bg-sky-50/90 px-2 py-1.5 text-[11px] leading-snug text-sky-950">
+                The source lists <span className="font-semibold tabular-nums">{perSqmLabel}</span> on the same
+                listing. The headline figure above is the <span className="font-semibold">total asking price</span>,
+                not per square metre.
+              </p>
+            ) : null}
+            {item.price_reduced ? (
+              <p className="mt-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] font-semibold leading-snug text-amber-950">
+                Price reduced on the portal since we first saved this listing — the headline amount is the latest
+                scraped ask.
+              </p>
+            ) : null}
+          </div>
           <motion.button
             type="button"
             whileTap={{ scale: 0.92 }}
@@ -333,11 +365,6 @@ export default function ListingCard({
         <div className="mt-auto space-y-2 border-t border-brand-100 pt-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
-              {item.price_reduced ? (
-                <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-800">
-                  Price reduced
-                </span>
-              ) : null}
               <span className="text-xs font-medium text-brand-500">{item.primary_source || "Source"}</span>
             </div>
             <motion.a

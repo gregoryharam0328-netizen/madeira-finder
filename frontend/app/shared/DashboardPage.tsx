@@ -271,9 +271,10 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
         match: (p: string, w: string | null) => p === "/dashboard/all" && w === "not_available",
       },
       {
-        href: "/dashboard/all?workflow=not_interested",
+        href: "/dashboard/not-interested",
         label: "Not interested",
-        match: (p: string, w: string | null) => p === "/dashboard/all" && w === "not_interested",
+        match: (p: string, w: string | null) =>
+          p === "/dashboard/not-interested" || (p === "/dashboard/all" && w === "not_interested"),
       },
     ];
     return base;
