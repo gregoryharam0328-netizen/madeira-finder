@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     digest_from_email: str = "info@exploringmadeira.com"
     digest_to_emails: str = "info@exploringmadeira.com"
 
-    next_public_api_url: "https://madeira-backend.onrender.com"
+    next_public_api_url:str= "https://madeira-backend.onrender.com"
 
     # Client filters (see client brief + screenshots)
     # Budget is specified in GBP; listings are typically scraped in EUR.
