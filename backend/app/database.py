@@ -25,8 +25,18 @@ engine = create_engine(settings.database_url, connect_args=connect_args, **engin
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 Base = declarative_base()
+_schema_ready = False
 
 def get_db():
+    global _schema_ready
+    # If startup DB bootstrap was skipped (temporary DB outage), recover on first request.
+    if not _schema_ready:
+        try:
+            Base.metadata.create_all(bind=engine)
+            _schema_ready = True
+        except Exception:
+            # Keep request path alive; endpoint-level DB errors will still surface if DB is down.
+            pass
     db = SessionLocal()
     try:
         yield db
