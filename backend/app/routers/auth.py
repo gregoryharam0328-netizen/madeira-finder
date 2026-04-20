@@ -6,6 +6,10 @@ from app.schemas import TokenResponse, UserCreate, UserLogin, UserOut
 from app.security import create_access_token, get_password_hash, verify_password
 from app.dependencies import get_current_user
 router = APIRouter()
+
+@router.get("/test")
+def test():
+    return {"message": "API is working"}
 @router.post("/register", response_model=UserOut)
 def register(payload: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(User).filter(User.email == payload.email.lower()).first()
