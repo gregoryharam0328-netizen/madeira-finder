@@ -80,7 +80,7 @@ def all_listings(
         False,
         description="If true, only client-brief matches (eligible). If false (default), include filtered_out scrapes.",
     ),
-    limit: int = Query(200, ge=1, le=200),
+    limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -122,7 +122,7 @@ def new_today(
     area: str | None = Query(None),
     sort: str | None = Query("newest"),
     exclude_hidden: bool = Query(True),
-    limit: int = Query(200, ge=1, le=200),
+    limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -149,7 +149,7 @@ def new_today(
 @router.get("/saved")
 def saved(
     exclude_hidden: bool = Query(False),
-    limit: int = Query(200, ge=1, le=200),
+    limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -165,7 +165,7 @@ def saved(
 @router.get("/not-interested")
 def not_interested_listings(
     sort: str | None = Query("newest", description="newest | price_asc | price_desc"),
-    limit: int = Query(200, ge=1, le=200),
+    limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -183,7 +183,7 @@ def not_interested_listings(
 @router.get("/price-changes")
 def price_changes(
     exclude_hidden: bool = Query(True),
-    limit: int = Query(200, ge=1, le=200),
+    limit: int = Query(500, ge=1, le=2000),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

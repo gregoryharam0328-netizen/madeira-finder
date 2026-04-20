@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
 import DashboardHeaderControls from "@/components/DashboardHeaderControls";
 import Sidebar, { type SidebarNavCounts } from "@/components/Sidebar";
@@ -13,7 +13,8 @@ import StatCard from "@/components/StatCard";
 import { apiFetch } from "@/lib/api";
 import { springSnappy, staggerContainer, staggerItem } from "@/lib/motion";
 
-const LIST_PAGE_SIZE = 24;
+/** Matches backend `le` on GET /listings* — fetch in chunks until a short page (all rows). */
+const LISTINGS_CHUNK = 2000;
 
 const ListingCard = dynamic(() => import("@/components/ListingCard"), {
   loading: () => (
@@ -136,10 +137,6 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
     bedrooms: "2",
     sort: "newest",
   });
-  const [hasMore, setHasMore] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const itemsRef = useRef<any[]>([]);
-
   const workflowFromUrl =
     pathname === "/dashboard/all" ? (searchParams.get("workflow") || "").toLowerCase() || null : null;
 
@@ -148,6 +145,20 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
       apiFetch(buildListingsPath(endpoint, filters, workflowFromUrl, { limit, offset })),
     [endpoint, filters, workflowFromUrl],
   );
+
+  /** Load every listing for the current view (repeat requests while the API returns full pages). */
+  const fetchAllListings = useCallback(async () => {
+    const merged: any[] = [];
+    let offset = 0;
+    for (;;) {
+      const raw = await fetchListings(LISTINGS_CHUNK, offset);
+      const rows = Array.isArray(raw) ? raw : [];
+      merged.push(...rows);
+      if (rows.length < LISTINGS_CHUNK) break;
+      offset += LISTINGS_CHUNK;
+    }
+    return dedupeListingGroups(merged);
+  }, [fetchListings]);
 
   const emptyHint = useMemo(() => {
     if (!summary) return null;
@@ -208,23 +219,16 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
     return null;
   }, [endpoint, summary]);
 
-  useEffect(() => {
-    itemsRef.current = items;
-  }, [items]);
-
   const loadDashboard = useCallback(
     (options?: { showLoading?: boolean }) => {
       const showLoading = options?.showLoading ?? true;
       if (showLoading) setLoading(true);
       setError("");
-      return Promise.allSettled([fetchListings(LIST_PAGE_SIZE, 0), apiFetch("/dashboard/summary")])
+      return Promise.allSettled([fetchAllListings(), apiFetch("/dashboard/summary")])
         .then((results) => {
           const [lr, sr] = results;
           if (lr.status === "fulfilled") {
-            const listings = lr.value;
-            const chunk = Array.isArray(listings) ? listings : [];
-            setItems(chunk);
-            setHasMore(chunk.length === LIST_PAGE_SIZE);
+            setItems(Array.isArray(lr.value) ? lr.value : []);
           }
           if (sr.status === "fulfilled") {
             setSummary(sr.value);
@@ -238,7 +242,7 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
           setLoading(false);
         });
     },
-    [fetchListings],
+    [fetchAllListings],
   );
 
   useEffect(() => {
@@ -258,8 +262,6 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
   const refreshAfterListingAction = useCallback(
     async (embeddedSummary?: Record<string, unknown> | null) => {
       setError("");
-      const n = itemsRef.current.length;
-      const limit = Math.min(200, Math.max(LIST_PAGE_SIZE, n));
       const msgs: string[] = [];
       if (embeddedSummary && typeof embeddedSummary === "object") {
         setSummary(embeddedSummary);
@@ -272,48 +274,15 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
         }
       }
       try {
-        const lr = await fetchListings(limit, 0);
-        const chunk = Array.isArray(lr) ? lr : [];
-        setItems(chunk);
-        setHasMore(chunk.length === limit && limit < 200);
+        const rows = await fetchAllListings();
+        setItems(rows);
       } catch (e) {
         msgs.push(e instanceof Error ? e.message : "Listings request failed");
       }
       setError(msgs.length ? msgs.join(" · ") : "");
     },
-    [fetchListings],
+    [fetchAllListings],
   );
-
-  const loadMore = useCallback(async () => {
-    if (!hasMore || loadingMore || loading) return;
-    setLoadingMore(true);
-    setError("");
-    try {
-      const offset = itemsRef.current.length;
-      const raw = await fetchListings(LIST_PAGE_SIZE, offset);
-      const chunk = Array.isArray(raw) ? raw : [];
-      setItems((prev) => dedupeListingGroups([...prev, ...chunk]));
-      setHasMore(chunk.length === LIST_PAGE_SIZE);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load more listings");
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [fetchListings, hasMore, loading, loadingMore]);
-
-  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = loadMoreSentinelRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) void loadMore();
-      },
-      { root: null, rootMargin: "240px", threshold: 0 },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [loadMore]);
 
   useEffect(() => {
     let cancelled = false;
@@ -747,10 +716,6 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
                     />
                   ))}
                 </motion.div>
-                {hasMore ? <div ref={loadMoreSentinelRef} className="h-4 w-full shrink-0" aria-hidden /> : null}
-                {loadingMore ? (
-                  <p className="py-4 text-center text-xs font-medium text-brand-500">Loading more listings…</p>
-                ) : null}
               </LayoutGroup>
             )}
           </AnimatePresence>
