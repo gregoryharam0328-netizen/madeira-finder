@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.scrapers.sources.portal_generic import PortalSearchScraper, PortalSelectors
-from app.scrapers.urls import imovirtual_default_search_url
+from app.scrapers.urls import imovirtual_default_search_url, imovirtual_houses_default_search_url
 
 
 class ImovirtualApartmentsScraper(PortalSearchScraper):
@@ -31,4 +31,4 @@ class ImovirtualHousesScraper(PortalSearchScraper):
     )
 
     def build_search_url(self) -> str:
-        return "https://www.imovirtual.com/pt/resultados/comprar/moradia/ilha-da-madeira"
+        return imovirtual_houses_default_search_url()

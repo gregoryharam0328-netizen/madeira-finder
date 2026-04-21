@@ -8,13 +8,14 @@ Daily ingestion: for each scraped item we (1) keep an audit row in `listings_raw
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 from app.config import settings
 from app.database import SessionLocal
 from app.models import ListingRaw, ScrapeRun, Source
 from app.scrapers.factory import build_scrapers
-from app.services.dedup import upsert_listing
+from app.services.dedup import SourceListingLookupCache, upsert_listing
 from app.services.digest import create_and_send_digests
 from app.services.listing_repair import repair_listings_from_last_raw
 from app.services.mock_cleanup import remove_mock_source_data
@@ -25,6 +26,15 @@ from app.services.normalization import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _fetch_listings_safe(scraper):
+    """Run one scraper; return (scraper, items, error). Used in parallel fetch phase."""
+    try:
+        return scraper, scraper.fetch_listings(), None
+    except Exception as exc:  # pragma: no cover - network / portal variability
+        log.exception("Scraper %s raised during fetch", scraper.name)
+        return scraper, None, exc
 
 
 def ensure_source(db, scraper_name: str) -> Source:
@@ -47,7 +57,22 @@ def run() -> None:
         if purged.get("removed_source") or (purged.get("removed_listings") or 0) > 0:
             log.info("%s", purged.get("message"))
 
-        for scraper in build_scrapers():
+        scrapers = list(build_scrapers())
+        fetch_results: list[tuple] = []
+        if settings.scrape_parallel_sources and len(scrapers) > 1:
+            workers = max(1, min(int(settings.scrape_parallel_max_workers), len(scrapers)))
+            log.info("Fetching %s sources in parallel (max_workers=%s)", len(scrapers), workers)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_fetch_listings_safe, s): s for s in scrapers}
+                for fut in as_completed(futures):
+                    fetch_results.append(fut.result())
+            order = {s.name: i for i, s in enumerate(scrapers)}
+            fetch_results.sort(key=lambda t: order.get(t[0].name, 999))
+        else:
+            for s in scrapers:
+                fetch_results.append(_fetch_listings_safe(s))
+
+        for scraper, raw_items, fetch_exc in fetch_results:
             source = ensure_source(db, scraper.name)
             run = ScrapeRun(source_id=source.id, run_type="scheduled", status="running")
             db.add(run)
@@ -55,20 +80,20 @@ def run() -> None:
             db.refresh(run)
             inserted = 0
             updated = 0
-            try:
-                raw_items = scraper.fetch_listings()
-            except Exception as exc:
-                log.exception("Scraper %s raised", scraper.name)
+            if fetch_exc is not None:
                 run.listings_found = 0
                 run.status = "failed"
                 run.finished_at = datetime.utcnow()
-                run.error_log = str(exc)
+                run.error_log = str(fetch_exc)
                 db.commit()
                 continue
 
+            if not isinstance(raw_items, list):
+                raw_items = []
             run.listings_found = len(raw_items)
             skipped_bedroom_floor = 0
             skipped_property_type_floor = 0
+            prepared: list[dict] = []
             for item in raw_items:
                 allowed_type, normalized_type = passes_hard_property_type_floor(item)
                 if not allowed_type:
@@ -82,6 +107,11 @@ def run() -> None:
                     continue
                 # Keep a resolved bedroom count on the raw snapshot so downstream normalization is consistent.
                 item["bedrooms"] = resolved_beds
+                prepared.append(item)
+
+            lookup_cache = SourceListingLookupCache()
+            raw_rows: list[ListingRaw] = []
+            for item in prepared:
                 raw = ListingRaw(
                     scrape_run_id=run.id,
                     source_id=source.id,
@@ -90,9 +120,19 @@ def run() -> None:
                     raw_payload_json=item,
                 )
                 db.add(raw)
+                raw_rows.append(raw)
+            if raw_rows:
                 db.flush()
+
+            for item, raw in zip(prepared, raw_rows):
                 normalized = normalize_listing(item)
-                _listing, created = upsert_listing(db, source_id=source.id, payload=normalized, raw_listing_id=raw.id)
+                _listing, created = upsert_listing(
+                    db,
+                    source_id=source.id,
+                    payload=normalized,
+                    raw_listing_id=raw.id,
+                    lookup_cache=lookup_cache,
+                )
                 inserted += int(created)
                 updated += int(not created)
             run.status = "success"

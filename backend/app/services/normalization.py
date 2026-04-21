@@ -34,10 +34,7 @@ def _client_property_types() -> set[str]:
 
 
 def _client_price_bounds_eur() -> tuple[float, float]:
-    return (
-        float(settings.min_price_gbp) * float(settings.gbp_to_eur_rate),
-        float(settings.max_price_gbp) * float(settings.gbp_to_eur_rate),
-    )
+    return (float(settings.client_budget_min_eur), float(settings.client_budget_max_eur))
 def normalize_text(value: str | None) -> str | None:
     if not value: return None
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii").lower().strip()

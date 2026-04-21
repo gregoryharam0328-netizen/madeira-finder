@@ -5,12 +5,16 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import DashboardHeaderControls from "@/components/DashboardHeaderControls";
 import Sidebar, { type SidebarNavCounts } from "@/components/Sidebar";
 import StatCard from "@/components/StatCard";
 import { apiFetch } from "@/lib/api";
+import {
+  clientBudgetBoundsFromSummary,
+  filterListingCardsByClientBudget,
+} from "@/lib/listingPrice";
 import { springSnappy, staggerContainer, staggerItem } from "@/lib/motion";
 
 /** Matches backend `le` on GET /listings* — fetch in chunks until a short page (all rows). */
@@ -137,6 +141,9 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
     bedrooms: "2",
     sort: "newest",
   });
+  /** Sidebar + header totals after the same client-budget filter as listing cards (null = use API summary). */
+  const [budgetSidebarCounts, setBudgetSidebarCounts] = useState<SidebarNavCounts | null>(null);
+  const budgetCountsGenRef = useRef(0);
   const workflowFromUrl =
     pathname === "/dashboard/all" ? (searchParams.get("workflow") || "").toLowerCase() || null : null;
 
@@ -160,18 +167,44 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
     return dedupeListingGroups(merged);
   }, [fetchListings]);
 
-  const fetchSavedCount = useCallback(async () => {
-    let total = 0;
-    let offset = 0;
-    for (;;) {
-      const raw = await apiFetch(`/listings/saved?limit=${LISTINGS_CHUNK}&offset=${offset}`);
-      const rows = Array.isArray(raw) ? raw : [];
-      total += rows.length;
-      if (rows.length < LISTINGS_CHUNK) break;
-      offset += LISTINGS_CHUNK;
+  /** Recompute nav counts from full listing payloads so they match `filterListingCardsByClientBudget` on the grid. */
+  const loadBudgetAlignedSidebarCounts = useCallback(async (summ: unknown) => {
+    const gen = ++budgetCountsGenRef.current;
+    try {
+      const { min, max } = clientBudgetBoundsFromSummary(summ);
+      const pull = async (ep: string, wf: string | null) => {
+        const merged: any[] = [];
+        let offset = 0;
+        for (;;) {
+          const path = buildListingsPath(ep, filters, wf, { limit: LISTINGS_CHUNK, offset });
+          const raw = await apiFetch(path);
+          const rows = Array.isArray(raw) ? raw : [];
+          merged.push(...rows);
+          if (rows.length < LISTINGS_CHUNK) break;
+          offset += LISTINGS_CHUNK;
+        }
+        return filterListingCardsByClientBudget(dedupeListingGroups(merged), min, max);
+      };
+      const [nt, all, sv, pc, ni] = await Promise.all([
+        pull("/listings/new", null),
+        pull("/listings", null),
+        pull("/listings/saved", null),
+        pull("/listings/price-changes", null),
+        pull("/listings/not-interested", null),
+      ]);
+      if (gen !== budgetCountsGenRef.current) return;
+      setBudgetSidebarCounts({
+        new_today: nt.length,
+        total: all.length,
+        saved: sv.length,
+        price_changes: pc.length,
+        not_interested: ni.length,
+      });
+    } catch {
+      if (gen !== budgetCountsGenRef.current) return;
+      setBudgetSidebarCounts(null);
     }
-    return total;
-  }, []);
+  }, [filters]);
 
   const emptyHint = useMemo(() => {
     if (!summary) return null;
@@ -241,7 +274,10 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
         .then((results) => {
           const [lr, sr] = results;
           if (lr.status === "fulfilled") {
-            setItems(Array.isArray(lr.value) ? lr.value : []);
+            const rows = Array.isArray(lr.value) ? lr.value : [];
+            const summ = sr.status === "fulfilled" ? sr.value : null;
+            const { min, max } = clientBudgetBoundsFromSummary(summ);
+            setItems(filterListingCardsByClientBudget(rows, min, max));
           }
           if (sr.status === "fulfilled") {
             setSummary(sr.value);
@@ -250,12 +286,13 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
           if (lr.status === "rejected") msgs.push(lr.reason?.message || "Listings request failed");
           if (sr.status === "rejected") msgs.push(sr.reason?.message || "Summary request failed");
           setError(msgs.length ? msgs.join(" · ") : "");
+          void loadBudgetAlignedSidebarCounts(sr.status === "fulfilled" ? sr.value : null);
         })
         .finally(() => {
           setLoading(false);
         });
     },
-    [fetchAllListings],
+    [fetchAllListings, loadBudgetAlignedSidebarCounts],
   );
 
   useEffect(() => {
@@ -282,11 +319,14 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
           return { ...(prev || {}), saved: Math.max(0, current + savedDelta) };
         });
       }
+      let summForCards: Record<string, unknown> | null = null;
       if (embeddedSummary && typeof embeddedSummary === "object") {
+        summForCards = embeddedSummary as Record<string, unknown>;
         setSummary(embeddedSummary);
       } else {
         try {
           const s = await apiFetch("/dashboard/summary");
+          summForCards = s as Record<string, unknown>;
           setSummary(s);
         } catch (e) {
           msgs.push(e instanceof Error ? e.message : "Summary request failed");
@@ -294,19 +334,15 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
       }
       try {
         const rows = await fetchAllListings();
-        setItems(rows);
+        const { min, max } = clientBudgetBoundsFromSummary(summForCards);
+        setItems(filterListingCardsByClientBudget(rows, min, max));
       } catch (e) {
         msgs.push(e instanceof Error ? e.message : "Listings request failed");
       }
-      try {
-        const savedCount = await fetchSavedCount();
-        setSummary((prev: any) => ({ ...(prev || {}), saved: savedCount }));
-      } catch (e) {
-        msgs.push(e instanceof Error ? e.message : "Saved count refresh failed");
-      }
+      await loadBudgetAlignedSidebarCounts(summForCards);
       setError(msgs.length ? msgs.join(" · ") : "");
     },
-    [fetchAllListings, fetchSavedCount],
+    [fetchAllListings, loadBudgetAlignedSidebarCounts],
   );
 
   useEffect(() => {
@@ -410,6 +446,7 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
   const isNotInterestedView = endpoint === "/listings/not-interested";
 
   const sidebarCounts = useMemo((): SidebarNavCounts => {
+    if (budgetSidebarCounts) return budgetSidebarCounts;
     return {
       new_today: Number(summary?.new_today) || 0,
       total: Number(summary?.total) || 0,
@@ -417,7 +454,7 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
       price_changes: Number(summary?.price_changes ?? 0) || 0,
       not_interested: Number(summary?.not_interested ?? 0) || 0,
     };
-  }, [summary]);
+  }, [summary, budgetSidebarCounts]);
 
   return (
     <main className="min-h-screen bg-brand-50">
@@ -451,8 +488,8 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
             </p>
             <DashboardHeaderControls
               lastScanAt={summary?.last_scan_at}
-              newToday={Number(summary?.new_today) || 0}
-              total={Number(summary?.total) || 0}
+              newToday={sidebarCounts.new_today}
+              total={sidebarCounts.total}
             />
           </div>
         </div>
@@ -568,9 +605,9 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
             >
               {(
                 [
-                  ["Total", summary.total, "neutral"],
-                  ["New today", summary.new_today, "emerald"],
-                  ["Favourites", summary.saved, "amber"],
+                  ["Total", sidebarCounts.total, "neutral"],
+                  ["New today", sidebarCounts.new_today, "emerald"],
+                  ["Favourites", sidebarCounts.saved, "amber"],
                   ["Need to call", summary.need_to_call ?? 0, "blue"],
                   ["Viewings", summary.viewing_arranged ?? 0, "violet"],
                 ] as const

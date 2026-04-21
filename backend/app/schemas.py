@@ -34,6 +34,8 @@ class DashboardSummary(BaseModel):
     need_to_call: int = 0
     viewing_arranged: int = 0
     last_scan_at: str | None = None
+    client_budget_min_eur: float = Field(..., description="Same band as ingestion eligibility / dashboard card picker.")
+    client_budget_max_eur: float = Field(..., description="Same band as ingestion eligibility / dashboard card picker.")
 
 
 class IdealistaCsvImportRequest(BaseModel):

@@ -22,7 +22,7 @@ from app.database import SessionLocal
 from app.models import ListingRaw, ScrapeRun, Source
 from app.scrapers.http import DEFAULT_HEADERS
 from app.scrapers.sources.idealista import _map_apify_item
-from app.services.dedup import upsert_listing
+from app.services.dedup import SourceListingLookupCache, upsert_listing
 from app.services.normalization import (
     normalize_listing,
     parse_bedrooms,
@@ -259,6 +259,37 @@ def import_idealista_csv_from_url(db, url: str) -> dict[str, Any]:
     updated = 0
     skipped = 0
     max_rows = int(getattr(settings, "idealista_csv_import_max_rows", 5000) or 5000)
+    _mapped_batch: list[dict[str, Any]] = []
+    lookup_cache = SourceListingLookupCache()
+
+    def _flush_mapped_batch() -> None:
+        nonlocal inserted, updated
+        if not _mapped_batch:
+            return
+        raw_rows: list[ListingRaw] = []
+        for mapped in _mapped_batch:
+            raw_row = ListingRaw(
+                scrape_run_id=run.id,
+                source_id=source.id,
+                source_listing_id=mapped.get("source_listing_id"),
+                source_url=str(mapped["url"]),
+                raw_payload_json=dict(mapped),
+            )
+            db.add(raw_row)
+            raw_rows.append(raw_row)
+        db.flush()
+        for mapped, raw_row in zip(_mapped_batch, raw_rows):
+            normalized = normalize_listing(mapped)
+            _listing, created = upsert_listing(
+                db,
+                source_id=source.id,
+                payload=normalized,
+                raw_listing_id=raw_row.id,
+                lookup_cache=lookup_cache,
+            )
+            inserted += int(created)
+            updated += int(not created)
+        _mapped_batch.clear()
 
     def process_item_dict(item: dict[str, Any]) -> None:
         nonlocal inserted, updated, skipped
@@ -281,19 +312,9 @@ def import_idealista_csv_from_url(db, url: str) -> dict[str, Any]:
             log.warning("CSV row skipped (%s): %s", reason, mapped.get("url"))
             skipped += 1
             return
-        raw_row = ListingRaw(
-            scrape_run_id=run.id,
-            source_id=source.id,
-            source_listing_id=mapped.get("source_listing_id"),
-            source_url=str(mapped["url"]),
-            raw_payload_json=dict(mapped),
-        )
-        db.add(raw_row)
-        db.flush()
-        normalized = normalize_listing(mapped)
-        _listing, created = upsert_listing(db, source_id=source.id, payload=normalized, raw_listing_id=raw_row.id)
-        inserted += int(created)
-        updated += int(not created)
+        _mapped_batch.append(dict(mapped))
+        if len(_mapped_batch) >= 64:
+            _flush_mapped_batch()
 
     try:
         if stripped.startswith("["):
@@ -357,6 +378,7 @@ def import_idealista_csv_from_url(db, url: str) -> dict[str, Any]:
         log.exception("Idealista CSV import failed")
         raise
     finally:
+        _flush_mapped_batch()
         run.finished_at = datetime.utcnow()
         run.listings_found = inserted + updated + skipped
         run.listings_inserted = inserted

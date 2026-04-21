@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.datetime_utils import local_today_midnight_utc_naive
 from app.models import Listing, ListingEvent, ListingGroup, ScrapeRun, UserListingState
 from app.schemas import DashboardSummary
@@ -118,4 +119,6 @@ def build_dashboard_summary(db: Session, user_id: UUID) -> DashboardSummary:
         need_to_call=need_to_call,
         viewing_arranged=viewing_arranged,
         last_scan_at=last_scan_at,
+        client_budget_min_eur=float(settings.client_budget_min_eur),
+        client_budget_max_eur=float(settings.client_budget_max_eur),
     )

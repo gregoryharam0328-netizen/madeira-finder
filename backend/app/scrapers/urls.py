@@ -3,12 +3,12 @@ from __future__ import annotations
 from urllib.parse import urlencode
 
 from app.config import settings
+from app.services.normalization import _client_price_bounds_eur
 
 
 def _eur_bounds() -> tuple[int, int]:
-    min_eur = int(float(settings.min_price_gbp) * float(settings.gbp_to_eur_rate))
-    max_eur = int(float(settings.max_price_gbp) * float(settings.gbp_to_eur_rate))
-    return min_eur, max_eur
+    min_eur, max_eur = _client_price_bounds_eur()
+    return int(min_eur), int(max_eur)
 
 
 def idealista_default_search_url() -> str:
@@ -28,19 +28,27 @@ def idealista_default_search_url() -> str:
     return f"https://www.idealista.pt/geo/venta-viviendas/madeira-municipio/{settings.idealista_location_code}/?" + urlencode(params)
 
 
-def imovirtual_default_search_url() -> str:
-    if settings.imovirtual_search_url:
-        return settings.imovirtual_search_url
-
+def _imovirtual_resultados_url(*, path_segment: str) -> str:
+    """path_segment: e.g. ``apartamento`` or ``moradia`` (Imovirtual URL segment after /comprar/)."""
     min_eur, max_eur = _eur_bounds()
-    # Imovirtual uses `/pt/resultados/...` listing pages for districts like Madeira.
-    base = "https://www.imovirtual.com/pt/resultados/comprar/apartamento/ilha-da-madeira"
+    base = f"https://www.imovirtual.com/pt/resultados/comprar/{path_segment}/ilha-da-madeira"
     params = {
         "price[from]": str(min_eur),
         "price[to]": str(max_eur),
         "rooms[from]": str(int(settings.min_bedrooms)),
     }
     return base + "?" + urlencode(params)
+
+
+def imovirtual_default_search_url() -> str:
+    if settings.imovirtual_search_url:
+        return settings.imovirtual_search_url
+    # Imovirtual uses `/pt/resultados/...` listing pages for districts like Madeira.
+    return _imovirtual_resultados_url(path_segment="apartamento")
+
+
+def imovirtual_houses_default_search_url() -> str:
+    return _imovirtual_resultados_url(path_segment="moradia")
 
 
 def supercasa_default_search_url() -> str:

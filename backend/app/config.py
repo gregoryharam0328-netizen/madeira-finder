@@ -25,7 +25,10 @@ class Settings(BaseSettings):
     next_public_api_url:str= "https://madeira-backend.onrender.com"
 
     # Client filters (see client brief + screenshots)
-    # Budget is specified in GBP; listings are typically scraped in EUR.
+    # EUR band for eligibility, scrape search URLs, and which listing is shown per group on the dashboard.
+    client_budget_min_eur: float = 260_000
+    client_budget_max_eur: float = 340_000
+    # Legacy GBP fields (optional reference / exports); card + ingestion budget uses client_budget_*_eur above.
     min_price_gbp: float = 250_000
     max_price_gbp: float = 350_000
     gbp_to_eur_rate: float = 1.17
@@ -37,6 +40,9 @@ class Settings(BaseSettings):
     scrape_max_pages_per_source: int = 1
     scrape_max_listings_per_source: int = 40
     scrape_timeout_seconds: float = 25.0
+    # Run independent portal scrapers concurrently (network-bound); DB upserts stay single-threaded.
+    scrape_parallel_sources: bool = True
+    scrape_parallel_max_workers: int = 8
 
     # Optional overrides (full search URLs). If unset, defaults are used.
     idealista_search_url: str | None = None

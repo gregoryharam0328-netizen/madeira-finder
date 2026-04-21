@@ -5,10 +5,11 @@ import re
 from typing import Any
 
 from app.config import settings
-
-_log = logging.getLogger(__name__)
+from app.services.normalization import _client_price_bounds_eur
 from app.scrapers.apify_client import ApifyError, run_actor_sync
 from app.scrapers.base import BaseScraper
+
+_log = logging.getLogger(__name__)
 
 # Community actor: https://apify.com/igolaizola/idealista-scraper
 DEFAULT_IDEALISTA_ACTOR = "igolaizola~idealista-scraper"
@@ -139,8 +140,9 @@ class IdealistaScraper(BaseScraper):
             return []
 
         actor_id = (settings.idealista_apify_actor_id or DEFAULT_IDEALISTA_ACTOR).strip()
-        min_eur = int(float(settings.min_price_gbp) * float(settings.gbp_to_eur_rate))
-        max_eur = int(float(settings.max_price_gbp) * float(settings.gbp_to_eur_rate))
+        min_eur, max_eur = _client_price_bounds_eur()
+        min_eur = int(min_eur)
+        max_eur = int(max_eur)
 
         run_input: dict[str, Any] = {
             "operation": "sale",

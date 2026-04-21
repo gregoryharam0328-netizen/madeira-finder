@@ -1,9 +1,32 @@
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.models import Listing, ListingEvent, ListingGroup, ListingGroupMember
+
+
+@dataclass
+class SourceListingLookupCache:
+    """Avoid repeated same-source SELECTs when ingesting many rows in one transaction."""
+
+    _by_url: dict[tuple[UUID, str], Listing] = field(default_factory=dict)
+    _by_sid: dict[tuple[UUID, str], Listing] = field(default_factory=dict)
+
+    def get(self, source_id: UUID, canonical_url: str, source_listing_id: str | None) -> Listing | None:
+        hit = self._by_url.get((source_id, canonical_url))
+        if hit is not None:
+            return hit
+        if source_listing_id:
+            return self._by_sid.get((source_id, source_listing_id))
+        return None
+
+    def remember(self, source_id: UUID, listing: Listing) -> None:
+        self._by_url[(source_id, listing.canonical_url)] = listing
+        sid = listing.source_listing_id
+        if sid:
+            self._by_sid[(source_id, sid)] = listing
 
 
 def _get_listing_group_id(db: Session, listing_id: UUID) -> UUID | None:
@@ -16,14 +39,24 @@ def find_existing_same_source(
     source_id: UUID,
     canonical_url: str,
     source_listing_id: str | None,
+    *,
+    lookup_cache: SourceListingLookupCache | None = None,
 ) -> Listing | None:
+    if lookup_cache is not None:
+        cached = lookup_cache.get(source_id, canonical_url, source_listing_id)
+        if cached is not None:
+            return cached
     q = db.query(Listing).filter(Listing.source_id == source_id)
     existing = q.filter(Listing.canonical_url == canonical_url).first()
     if existing:
+        if lookup_cache is not None:
+            lookup_cache.remember(source_id, existing)
         return existing
     if source_listing_id:
         existing = q.filter(Listing.source_listing_id == source_listing_id).first()
         if existing:
+            if lookup_cache is not None:
+                lookup_cache.remember(source_id, existing)
             return existing
     return None
 
@@ -64,13 +97,26 @@ def attach_listing_to_group(db: Session, listing: Listing, group_id: UUID | None
     db.add(ListingGroupMember(listing_group_id=group.id, listing_id=listing.id, match_method=method, match_score=score))
 
 
-def upsert_listing(db: Session, source_id: UUID, payload: dict, raw_listing_id: UUID | None = None):
+def upsert_listing(
+    db: Session,
+    source_id: UUID,
+    payload: dict,
+    raw_listing_id: UUID | None = None,
+    *,
+    lookup_cache: SourceListingLookupCache | None = None,
+):
     """
     Persist the property in `listings` first, then rows that FK to it:
     `listing_events`, and via `attach_listing_to_group` → `listing_groups` / `listing_group_members`.
     """
     # 1) Strong identity within same source: update the existing listing row
-    existing = find_existing_same_source(db, source_id, payload["canonical_url"], payload.get("source_listing_id"))
+    existing = find_existing_same_source(
+        db,
+        source_id,
+        payload["canonical_url"],
+        payload.get("source_listing_id"),
+        lookup_cache=lookup_cache,
+    )
     if existing:
         old_price = float(existing.price) if existing.price is not None else None
         new_price = payload.get("price")
@@ -91,6 +137,8 @@ def upsert_listing(db: Session, source_id: UUID, payload: dict, raw_listing_id: 
         existing.image_url = payload.get("image_url")
         existing.image_urls = payload.get("image_urls")
         existing.fingerprint = payload.get("fingerprint")
+        if "eligibility_status" in payload:
+            existing.eligibility_status = payload["eligibility_status"]
         existing.raw_listing_id = raw_listing_id
         existing.last_seen_at = datetime.utcnow()
 
@@ -106,6 +154,8 @@ def upsert_listing(db: Session, source_id: UUID, payload: dict, raw_listing_id: 
                 new_value_json={"price": float(new_price) if new_price is not None else None},
             )
         )
+        if lookup_cache is not None:
+            lookup_cache.remember(source_id, existing)
         return existing, False
 
     # 2) New listing row. If fingerprint matches, group it with the existing property cluster.
@@ -142,4 +192,6 @@ def upsert_listing(db: Session, source_id: UUID, payload: dict, raw_listing_id: 
 
     db.add(ListingEvent(listing_id=listing.id, event_type="new", new_value_json={"title": listing.title}))
     attach_listing_to_group(db, listing, group_id=group_id, method=method or "manual", score=score or 100.0)
+    if lookup_cache is not None:
+        lookup_cache.remember(source_id, listing)
     return listing, True

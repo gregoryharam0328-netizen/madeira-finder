@@ -5,6 +5,7 @@ from urllib.parse import urljoin
 
 from app.scrapers.base import BaseScraper
 from app.scrapers.http import fetch_html, guess_bedrooms_from_text, guess_property_type_from_text, parse_eur_price, soup
+from app.scrapers.urls import century21_default_search_url
 
 
 _REF_RE = re.compile(r"^/comprar/(?:C\d{4}-\d{5}|\d{4}-\d{5})$")
@@ -14,7 +15,7 @@ class Century21BuyScraper(BaseScraper):
     name = "Century 21 Portugal"
 
     def build_search_url(self) -> str:
-        return "https://www.century21.pt/comprar"
+        return century21_default_search_url()
 
     @staticmethod
     def _mentions_madeira(blob: str) -> bool:
