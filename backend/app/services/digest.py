@@ -85,13 +85,8 @@ def create_and_send_digests(db: Session):
         digest = DigestRun(user_id=None, listing_count=len(cards), status="pending", digest_payload_json=payload)
         db.add(digest)
         db.flush()
-
-        if not cards:
-            digest.status = "skipped"
-            results.append({"email": to_email, "status": "skipped"})
-            continue
-
-        ok, err = _send_resend_email(to_email=to_email, subject="New Madeira properties today", html=payload_html)
+        subject = "New Madeira properties today" if cards else "Daily Madeira update (no new listings today)"
+        ok, err = _send_resend_email(to_email=to_email, subject=subject, html=payload_html)
         digest.status = "sent" if ok else "failed"
         digest.error_log = err
         results.append({"email": to_email, "status": digest.status, "error": err})

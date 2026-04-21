@@ -9,7 +9,6 @@ import { springSnappy } from "@/lib/motion";
 const WORKFLOW_OPTIONS: { value: string; label: string }[] = [
   { value: "new", label: "Unreviewed" },
   { value: "seen", label: "Seen" },
-  { value: "favourite", label: "Favourite" },
   { value: "need_to_call", label: "Need to call" },
   { value: "viewing_arranged", label: "Viewing arranged" },
   { value: "offer_made", label: "Offer made" },
@@ -113,7 +112,7 @@ export default function ListingCard({
   variant = "default",
 }: {
   item: any;
-  onRefresh: (embeddedSummary?: Record<string, unknown> | null) => void | Promise<void>;
+  onRefresh: (embeddedSummary?: Record<string, unknown> | null, savedDelta?: number) => void | Promise<void>;
   variant?: "default" | "new_today";
 }) {
   const reduce = useReducedMotion();
@@ -194,13 +193,14 @@ export default function ListingCard({
       method: "PATCH",
       body: JSON.stringify({ workflow_status: next }),
     })) as ActionResponse;
-    await onRefresh(data?.summary ?? null);
+    await onRefresh(data?.summary ?? null, 0);
   }
 
   async function toggleStar() {
+    const savedDelta = item.is_saved ? -1 : 1;
     const path = item.is_saved ? "unsave" : "save";
     const data = (await apiFetch(`/actions/${item.listing_group_id}/${path}`, { method: "POST" })) as ActionResponse;
-    await onRefresh(data?.summary ?? null);
+    await onRefresh(data?.summary ?? null, savedDelta);
   }
 
   return (

@@ -155,7 +155,7 @@ def saved(
     current_user: User = Depends(get_current_user),
 ):
     query = base_query(db, current_user.id).filter(UserListingState.is_saved.is_(True))
-    query = query.filter(Listing.is_active.is_(True), Listing.eligibility_status == "eligible")
+    query = query.filter(Listing.is_active.is_(True), Listing.eligibility_status.in_(["eligible", "filtered_out"]))
     if exclude_hidden:
         query = filter_visible_on_main_feed(query)
     rows = query.order_by(Listing.first_seen_at.desc()).offset(offset).limit(limit).all()

@@ -160,6 +160,19 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
     return dedupeListingGroups(merged);
   }, [fetchListings]);
 
+  const fetchSavedCount = useCallback(async () => {
+    let total = 0;
+    let offset = 0;
+    for (;;) {
+      const raw = await apiFetch(`/listings/saved?limit=${LISTINGS_CHUNK}&offset=${offset}`);
+      const rows = Array.isArray(raw) ? raw : [];
+      total += rows.length;
+      if (rows.length < LISTINGS_CHUNK) break;
+      offset += LISTINGS_CHUNK;
+    }
+    return total;
+  }, []);
+
   const emptyHint = useMemo(() => {
     if (!summary) return null;
     if (summary.total === 0) {
@@ -260,9 +273,15 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
    * mutation) so Favourites / Not interested counts cannot lag; then resync the listing grid.
    */
   const refreshAfterListingAction = useCallback(
-    async (embeddedSummary?: Record<string, unknown> | null) => {
+    async (embeddedSummary?: Record<string, unknown> | null, savedDelta = 0) => {
       setError("");
       const msgs: string[] = [];
+      if (savedDelta !== 0) {
+        setSummary((prev: any) => {
+          const current = Number(prev?.saved ?? 0);
+          return { ...(prev || {}), saved: Math.max(0, current + savedDelta) };
+        });
+      }
       if (embeddedSummary && typeof embeddedSummary === "object") {
         setSummary(embeddedSummary);
       } else {
@@ -279,9 +298,15 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
       } catch (e) {
         msgs.push(e instanceof Error ? e.message : "Listings request failed");
       }
+      try {
+        const savedCount = await fetchSavedCount();
+        setSummary((prev: any) => ({ ...(prev || {}), saved: savedCount }));
+      } catch (e) {
+        msgs.push(e instanceof Error ? e.message : "Saved count refresh failed");
+      }
       setError(msgs.length ? msgs.join(" · ") : "");
     },
-    [fetchAllListings],
+    [fetchAllListings, fetchSavedCount],
   );
 
   useEffect(() => {
@@ -384,14 +409,13 @@ function DashboardPageInner({ endpoint, title }: { endpoint: string; title: stri
   const showFilterDropdowns = endpoint === "/listings" || endpoint === "/listings/new";
   const isNotInterestedView = endpoint === "/listings/not-interested";
 
-  const sidebarCounts = useMemo((): SidebarNavCounts | null => {
-    if (!summary) return null;
+  const sidebarCounts = useMemo((): SidebarNavCounts => {
     return {
-      new_today: Number(summary.new_today) || 0,
-      total: Number(summary.total) || 0,
-      saved: Number(summary.saved) || 0,
-      price_changes: Number(summary.price_changes ?? 0) || 0,
-      not_interested: Number(summary.not_interested ?? 0) || 0,
+      new_today: Number(summary?.new_today) || 0,
+      total: Number(summary?.total) || 0,
+      saved: Number(summary?.saved) || 0,
+      price_changes: Number(summary?.price_changes ?? 0) || 0,
+      not_interested: Number(summary?.not_interested ?? 0) || 0,
     };
   }, [summary]);
 

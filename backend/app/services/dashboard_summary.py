@@ -61,7 +61,7 @@ def build_dashboard_summary(db: Session, user_id: UUID) -> DashboardSummary:
 
     saved = (
         base_query(db, user_id)
-        .filter(Listing.is_active.is_(True), Listing.eligibility_status == "eligible")
+        .filter(Listing.is_active.is_(True), Listing.eligibility_status.in_(["eligible", "filtered_out"]))
         .filter(UserListingState.is_saved.is_(True))
         .count()
     )

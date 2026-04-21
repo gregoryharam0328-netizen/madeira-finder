@@ -24,8 +24,7 @@ const NAV_ITEMS: { href: string; label: string; countKey: keyof SidebarNavCounts
 ];
 
 function labelWithCount(label: string, count: number | undefined) {
-  if (count === undefined) return label;
-  return `${label} (${count})`;
+  return `${label} (${count ?? 0})`;
 }
 
 function navItemActive(pathname: string | null, workflow: string, itemHref: string): boolean {
@@ -35,7 +34,10 @@ function navItemActive(pathname: string | null, workflow: string, itemHref: stri
     return p === "/dashboard";
   }
   if (itemHref === "/dashboard/all") {
-    return p === "/dashboard/all" && w !== "not_interested";
+    return p === "/dashboard/all" && w !== "not_interested" && w !== "favourite";
+  }
+  if (itemHref === "/dashboard/saved") {
+    return p === "/dashboard/saved" || w === "favourite";
   }
   if (itemHref === "/dashboard/not-interested") {
     return p === "/dashboard/not-interested" || w === "not_interested";
